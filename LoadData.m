@@ -18,7 +18,7 @@ classdef LoadData
     
     methods
         function obj = LoadData(filePath)
-            % 构造函数：支持 CSV 文件
+            % 构造函数
             if nargin < 1
                 % 默认读取当前目录下的第一个 CSV 文件
                 fileList = dir('*.csv');
@@ -37,11 +37,10 @@ classdef LoadData
         end
         
         function obj = readData(obj)
-            % 读取 CSV 数据并验证列名
             try
                 tbl = readtable(obj.FilePath, ...
                     'Delimiter', ',', ...          
-                    'VariableNamingRule', 'preserve'); % 保留原始列名
+                    'VariableNamingRule', 'preserve'); 
             catch ME
                 error('LoadData:ReadError', 'CSV 文件读取失败: %s', ME.message);
             end
@@ -57,7 +56,6 @@ classdef LoadData
         end
     end
     
-    % Dependent 属性的 get 方法
     methods
         function value = get.Rec(obj),       value = obj.DataTable.Rec;       end
         function value = get.Cyc(obj),       value = obj.DataTable.Cyc;       end
