@@ -33,9 +33,5 @@ classdef AnalyticData
                 obj.skip=1
             end
         end
-
-        function obj = calclateOCV(obj,LocalData)
-
-        end
     end
 end
