@@ -6,10 +6,10 @@ properties
     SOC_Status
     SOC_Windows
 end
- methods
-    function obj = calculateSoc(obj, config, data) 
-        SOC0 = config.SOC0; 
-        capacity = config.C0; 
+methods
+    function obj = calculateSoc(obj,data) 
+        SOC0 = config.getInstance().SOC0; 
+        capacity = config.getInstance().C0; 
     
         time = data.TestTime;
         current = data.Amps; 
@@ -30,45 +30,27 @@ end
     end
 
 
-    function obj = getSOCWindows(obj, config, data)
-        window_size = config.SOC_Window_Granularity;
-        soc_edges = 0:window_size:100; 
+    function obj = getSOCWindows(obj,data)
+        window_size = config.getInstance().SOC_Window_Granularity;
+        soc_edges = 0:window_size:100;
         
-        % 创建空结构体数组存储窗口数据
-        obj.SOC_Windows = struct(...
-            'Range', {}, ...     % 窗口范围 [min, max]
-            'Indices', {}, ...   % 属于该窗口的数据索引
-            'MeanVoltage', {}, ... 
-            'MeanCurrent', {}, ...
-            'StdR0', {} ...     
-        );
-        
-        % 遍历所有SOC窗口
-        for i = 1:length(soc_edges)-1
+        num_windows = length(soc_edges) - 1;
+        obj.SOC_Windows = repmat(soc_block(), 1, num_windows);
+        for i = 1:num_windows
             lower = soc_edges(i);
             upper = soc_edges(i+1);
             
-            % 找到属于当前窗口的索引（处理最后一个窗口闭区间）
-            if i == length(soc_edges)-1
+            current_window = soc_block(lower, upper);
+            
+            if i == num_windows
                 mask = (obj.SOC_Status >= lower) & (obj.SOC_Status <= upper);
             else
                 mask = (obj.SOC_Status >= lower) & (obj.SOC_Status < upper);
             end
+            current_window.indices = find(mask);
             
-            % 填充窗口信息
-            obj.SOC_Windows(i).Range = [lower, upper];
-            obj.SOC_Windows(i).Indices = find(mask);
-            
-            % 计算统计量（示例：电压和电流的均值）
-            if ~isempty(obj.SOC_Windows(i).Indices)
-                obj.SOC_Windows(i).MeanVoltage = mean(data.Volts(mask));
-                obj.SOC_Windows(i).MeanCurrent = mean(data.Amps(mask));
-            else
-                obj.SOC_Windows(i).MeanVoltage = NaN;
-                obj.SOC_Windows(i).MeanCurrent = NaN;
-            end
+            obj.SOC_Windows(i) = current_window;
         end
     end
- end
-    
+end
 end
