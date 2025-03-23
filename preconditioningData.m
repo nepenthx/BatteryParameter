@@ -7,6 +7,11 @@ properties
     SOC_Windows
 end
 methods
+
+    function obj= init(obj,data)
+        obj=obj.calculateSoc(data);
+        obj=obj.getSOCWindows(data);
+    end
     function obj = calculateSoc(obj,data) 
         SOC0 = config.getInstance().SOC0; 
         capacity = config.getInstance().C0; 
@@ -30,7 +35,7 @@ methods
     end
 
 
-    function obj = getSOCWindows(obj,data)
+    function obj = getSOCWindows(obj, data)
         window_size = config.getInstance().SOC_Window_Granularity;
         soc_edges = 0:window_size:100;
         
@@ -43,12 +48,12 @@ methods
             current_window = soc_block(lower, upper);
             
             if i == num_windows
-                mask = (obj.SOC_Status >= lower) & (obj.SOC_Status <= upper);
+                mask = (obj.SOC_Status >= lower/100) & (obj.SOC_Status <= upper/100);
             else
-                mask = (obj.SOC_Status >= lower) & (obj.SOC_Status < upper);
+                mask = (obj.SOC_Status >= lower/100) & (obj.SOC_Status < upper/100);
             end
-            current_window.indices = find(mask);
-            
+            current_window.indices = find(mask);            
+            current_window.SOC = obj.SOC_Status(current_window.indices); 
             obj.SOC_Windows(i) = current_window;
         end
     end

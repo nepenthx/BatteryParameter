@@ -33,7 +33,7 @@ classdef LoadData
                 end
                 obj.FilePath = filePath;
             end
-            obj = obj.readData();  % 调用数据读取方法
+            obj = obj.readData();  
         end
         
         function obj = readData(obj)
@@ -53,6 +53,12 @@ classdef LoadData
             end
             
             obj.DataTable = tbl(:, requiredCols);
+        end
+        function rowData = getRow(obj, idx)
+            validateattributes(idx, {'numeric'}, ...
+                {'scalar', 'positive', 'integer', '<=', height(obj.DataTable)});
+    
+            rowData = table2struct(obj.DataTable(idx, :));
         end
     end
     
