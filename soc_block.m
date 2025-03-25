@@ -7,7 +7,7 @@ classdef soc_block
         R0              
         oth
         rowInfo
-        skip=0            
+        skip = 0            
     end
     
     methods
@@ -22,114 +22,143 @@ classdef soc_block
             obj.indices = [];
             obj.R0 = NaN;
         end
-      
-        function obj = calculateR0(obj)
-            % calculateR0 - The analytic method calculates the value of R
-            % 需要找到电流突变的阈值，在达到阈值后用dv/dt
-            %有一个需要注意的问题是，R是和SOC相关的。看表格中的数据，通过安时积分法可以得到SOC的变化量，可能还需要手动提供一个SOC的初始状态来帮助判别
-            threshold = 0.1; % 定义的阈值
-            currents = obj.rowInfo.Amps;
-            voltage = obj.rowInfo.Volts;
-            diff_current = diff(currents);
-            change_indices = find(abs(diff_current) > threshold);
-            R0_values = [];
-            
-            for i = 1:length(change_indices)
-                index = change_indices(i);
-                delta_V = voltage(index + 1) - voltage(index);
-                delta_I = diff_current(index);
-                R0 = delta_V / delta_I;
-                R0_values = [R0_values; R0];
+        function obj = calculateR0(obj, threshold, avg_points)
+            % 计算 SOC_block 对象在特定 SOC 区间内的 R0
+            % 输入：
+            %   obj：SOC_block 对象，包含 rowInfo 结构（已按 SOC 区间划分）
+            %   threshold：电流跳变阈值（默认 0.5A）
+            %   avg_points：跳变前后取平均的点数（默认 3）
+            % 输出：
+            %   obj：更新后的对象，包含该 SOC 区间的 R0
+        
+            % 设置默认参数
+            if nargin < 2 || isempty(threshold)
+                threshold = 0.5; % 默认电流跳变阈值 0.5A
             end
-            
+            if nargin < 3 || isempty(avg_points)
+                avg_points = 3; % 默认取前后 3 个点平均
+            end
+        
+            % 提取当前 SOC 区间的数据
+            currents = [obj.rowInfo.Amps];   % 电流数组
+            voltages = [obj.rowInfo.Volts];  % 电压数组
+            N = length(currents);            % 数据点数
+        
+            % 检查数据点数是否足够
+            if N < 2 * avg_points + 1
+                obj.R0 = NaN;
+                disp("错误：该 SOC 区间数据点不足，无法计算 R0");
+                return;
+            end
+        
+            % 初始化 R0 集合
+            R0_values = [];
+        
+            % 检测电流跳变并计算 R0
+            for i = avg_points + 1 : N - avg_points
+                % 计算相邻点的电流差
+                delta_I = currents(i) - currents(i - 1);
+                
+                % 检查是否超过跳变阈值
+                if abs(delta_I) > threshold
+                    % 取跳变前后 avg_points 个点的平均值
+                    I_before = mean(currents(i - avg_points : i - 1));
+                    V_before = mean(voltages(i - avg_points : i - 1));
+                    I_after = mean(currents(i : i + avg_points - 1));
+                    V_after = mean(voltages(i : i + avg_points - 1));
+                    
+                    % 计算变化量
+                    delta_I = I_after - I_before;
+                    delta_V = V_after - V_before;
+                    
+                    % 避免除以零并计算 R0
+                    if delta_I ~= 0
+                        R0 = delta_V / delta_I;
+                        R0_values = [R0_values; R0];
+                    end
+                end
+            end
+        
             if ~isempty(R0_values)
                 obj.R0 = mean(R0_values);
             else
-                obj.R0 = NaN; % 没有突变点的情况；此时统一使用数值方法求解 
-                disp("NANNANNAN")
-                obj.skip=1
+                obj.R0 = NaN; 
+                disp("未检测到有效跳变点，统一用数值方法计算参数");
             end
         end
-
+      
         function obj = getAllRow(obj, data)
-            totalRows = height(obj.indices);
+            totalRows = numel(obj.indices);
             disp(totalRows);
             obj.rowInfo = struct('Rec', {}, 'Cyc', {}, 'Step', {}, ...
                                 'TestTime', {}, 'StepTime', {}, ...
                                 'Amp_hr', {}, 'Watt_hr', {}, ...
                                 'Amps', {}, 'Volts', {});
             for i = 1:totalRows
-                tempStruct = data.getRow(i);
+                tempStruct = data.getRow(obj.indices(i));
                 obj.rowInfo(i) = tempStruct;
             end
         end
 
-    
-
         function obj = fminconTest(obj)
             data = obj.rowInfo;
-            t = data.TestTime;
-            I = data.Amps;
-            V_meas = data.Volts;
+            t = [data.TestTime]';
+            I = [data.Amps]';
+            V_meas = [data.Volts]';
             S = obj.SOC;
-                        
-            % 初始猜测
-            param0 = [0, mean(V_meas), 0.01, 0.01, 100, 0];  % [OCV1, OCV2, R0, R1, tau1, V_RC_init]
-        
-            % 参数边界
-            lb = [-10, 3, 0, 0, 1, -5];    % 下界
-            ub = [10, 4.2, 0.1, 0.1, 1000, 5];  % 上界
-        
-            % 等式约束（初始时刻电压一致）
-            Aeq = [S(1), 1, -I(1), 0, 0, -1];
-            beq = V_meas(1);
-        
-            % 优化选项
-            options = optimset('Display', 'iter', 'MaxIter', 1000);
-        
-            % 运行 fmincon 优化，使用 obj 调用 compute_RMSE
-            [param_opt, fval] = fmincon(@(x) obj.compute_RMSE(x, t, I, V_meas, S), param0, [], [], Aeq, beq, lb, ub, [], options);
-        
-            % 输出优化结果
-            disp('优化后的电池参数:');
-            disp(['OCV1: ', num2str(param_opt(1))]);
-            disp(['OCV2: ', num2str(param_opt(2))]);
-            disp(['R0: ', num2str(param_opt(3))]);
-            disp(['R1: ', num2str(param_opt(4))]);
-            disp(['tau1: ', num2str(param_opt(5))]);
-            disp(['V_RC_init: ', num2str(param_opt(6))]);
-            disp(['RMSE: ', num2str(fval)]);
-        end
-        
-      
-            % 定义目标函数
-            function error = compute_RMSE(obj, x, t, I, V_meas, S)
-            % 提取参数
-            OCV1 = x(1);    % OCV 与 SOC 的线性关系斜率
-            OCV2 = x(2);    % OCV 截距
-            R0 = x(3);      % 内阻
-            R1 = x(4);      % RC 对电阻
-            tau1 = x(5);    % RC 对时间常数
-            V_RC_init = x(6); % RC 对初始电压
             
-            N = length(t);
-            V_RC = zeros(N, 1);  % RC 对电压数组
-            V_RC(1) = V_RC_init;
-            V_model = zeros(N, 1);  % 模型预测电压数组
-            
-            % 使用欧拉法计算 V_RC 和 V_model
-            for k = 2:N
-                dt = t(k) - t(k-1);
-                V_RC(k) = V_RC(k-1) + dt * ((I(k-1) * R1 - V_RC(k-1)) / tau1);
-                OCV_k = OCV1 * S(k) + OCV2;
-                V_model(k) = OCV_k - I(k) * R0 - V_RC(k);
+            if ~isequal(length(t), length(I), length(V_meas), length(S))
+                error('t, I, V_meas, S 的长度必须一致！');
+            end
+            if ~isnumeric(t) || ~isnumeric(I) || ~isnumeric(V_meas) || ~isnumeric(S)
+                error('t, I, V_meas, S 必须是数值类型！');
             end
             
-            % 初始时刻电压
-            OCV_1 = OCV1 * S(1) + OCV2;
-            V_model(1) = OCV_1 - I(1) * R0 - V_RC(1);
+            if isnan(obj.R0)
+                param0 = [0, mean(V_meas), 0.01, 0.01, 100, 0];
+                lb = [-1, 3.0, 0.001, 0.001, 10, -1];  % 下界
+                ub = [1, 4.2, 0.1, 0.1, 100, 1];       % 上界
+                disp('R0未初始化，统一计算');
+            else
+                param0 = [0, mean(V_meas), obj.R0, 0.01, 100, 0];
+                lb = [-1, 3.0, obj.R0*0.99, 0, 10, -1];
+                ub = [1, 4.2, obj.R0*1.01, 0.1, 1000, 1];
+                disp('R0已初始化');
+            end
             
-            % 计算均方根误差（RMSE）
+            Aeq = [S(1), 1, -I(1), 0, 0, -1];
+            beq = V_meas(1);
+            
+            options = optimset('Display', 'iter', 'MaxIter', 500);
+            [param_opt, fval] = fmincon(@(x) obj.compute_RMSE(x, t, I, V_meas, S), ...
+                param0, [], [], Aeq, beq, lb, ub, [], options);
+            
+            if isnan(obj.R0)
+                obj.R0 = param_opt(3);
+            end
+            obj.oth = param_opt;
+        end
+        
+        function error = compute_RMSE(obj, x, t, I, V_meas, S)
+            OCV1 = x(1);
+            OCV2 = x(2);
+            R0 = x(3);
+            R1 = x(4);
+            tau1 = x(5);
+            V_RC_init = x(6);
+            
+            N = length(t);
+            V_RC = zeros(N,1);
+            V_RC(1) = V_RC_init;
+            
+            for k = 2:N
+                dt = t(k) - t(k-1);
+                V_RC(k) = V_RC(k-1) + dt * ((I(k-1)*R1 - V_RC(k-1)) / tau1);
+            end
+            
+            OCV = OCV1 * S + OCV2;
+            V_model = OCV - I.*R0 - V_RC;
+            
             error = sqrt(mean((V_meas - V_model).^2));
         end
     end
