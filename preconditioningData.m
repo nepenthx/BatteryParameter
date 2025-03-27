@@ -27,10 +27,15 @@ methods
         for k = 2:length(time)
             delta_Q = current(k-1) * dt(k-1); 
             SOC = SOC + (delta_Q / capacity) * 100; 
-            SOC = max(0, min(SOC, 100));
+            %SOC = max(0, min(SOC, 100));
             SOC_List(k) = SOC;
         end
-    
+
+        max_value=max(SOC_List);
+        temp_value=max_value-100;
+        for k = 1:length(SOC_List)
+            SOC_List(k)=SOC_List(k)-temp_value;
+        end
         obj.SOC_Status = SOC_List;
     end
 
@@ -48,9 +53,9 @@ methods
             current_window = soc_block(lower, upper);
             
             if i == num_windows
-                mask = (obj.SOC_Status >= lower/100) & (obj.SOC_Status <= upper/100);
+                mask = (obj.SOC_Status >= lower) & (obj.SOC_Status <= upper);
             else
-                mask = (obj.SOC_Status >= lower/100) & (obj.SOC_Status < upper/100);
+                mask = (obj.SOC_Status >= lower) & (obj.SOC_Status < upper);
             end
             current_window.indices = find(mask);            
             current_window.SOC = obj.SOC_Status(current_window.indices); 

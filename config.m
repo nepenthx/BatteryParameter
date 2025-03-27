@@ -23,7 +23,7 @@ classdef config < handle
         function singleObj = getInstance()
             persistent localObj
             if isempty(localObj) || ~isvalid(localObj)
-                localObj = config(0, 500, 5);
+                localObj = config(100, 4.3635, 5);
             end
             singleObj = localObj;
         end

@@ -31,30 +31,25 @@ classdef soc_block
             % 输出：
             %   obj：更新后的对象，包含该 SOC 区间的 R0
         
-            % 设置默认参数
             if nargin < 2 || isempty(threshold)
-                threshold = 0.5; % 默认电流跳变阈值 0.5A
+                threshold = 0.5;
             end
             if nargin < 3 || isempty(avg_points)
-                avg_points = 3; % 默认取前后 3 个点平均
+                avg_points = 3;
             end
         
-            % 提取当前 SOC 区间的数据
-            currents = [obj.rowInfo.Amps];   % 电流数组
-            voltages = [obj.rowInfo.Volts];  % 电压数组
-            N = length(currents);            % 数据点数
+            currents = [obj.rowInfo.Amps];    
+            voltages = [obj.rowInfo.Volts];  
+            N = length(currents);           
         
-            % 检查数据点数是否足够
             if N < 2 * avg_points + 1
                 obj.R0 = NaN;
                 disp("错误：该 SOC 区间数据点不足，无法计算 R0");
                 return;
             end
         
-            % 初始化 R0 集合
             R0_values = [];
         
-            % 检测电流跳变并计算 R0
             for i = avg_points + 1 : N - avg_points
                 % 计算相邻点的电流差
                 delta_I = currents(i) - currents(i - 1);
@@ -115,14 +110,14 @@ classdef soc_block
             end
             
             if isnan(obj.R0)
-                param0 = [0, mean(V_meas), 0.01, 0.01, 100, 0];
-                lb = [-1, 3.0, 0.001, 0.001, 10, -1];  % 下界
-                ub = [1, 4.2, 0.1, 0.1, 100, 1];       % 上界
+                param0 = [0, mean(V_meas), 0.01, 0.01, 5, 0];
+                lb = [-1, 3.0, 0.001, 0.001, 10, -4.2];  % 下界
+                ub = [1, 4.2, 0.1, 0.1, 100, 4.2];       % 上界
                 disp('R0未初始化，统一计算');
             else
-                param0 = [0, mean(V_meas), obj.R0, 0.01, 100, 0];
-                lb = [-1, 3.0, obj.R0*0.99, 0, 10, -1];
-                ub = [1, 4.2, obj.R0*1.01, 0.1, 1000, 1];
+                param0 = [0, mean(V_meas), obj.R0, 0.01, 5, 0];
+                lb = [-1, 3.0, obj.R0*0.99, 0, 10, -4.2];
+                ub = [1, 4.2, obj.R0*1.01, 0.1, 1000, 4.2];
                 disp('R0已初始化');
             end
             
