@@ -18,16 +18,13 @@ classdef LoadData
     
     methods
         function obj = LoadData(filePath)
-            % 构造函数
             if nargin < 1
-                % 默认读取当前目录下的第一个 CSV 文件
                 fileList = dir('*.csv');
                 if isempty(fileList)
                     error('LoadData:FileNotFound', '未找到 CSV 文件');
                 end
                 obj.FilePath = fullfile(pwd, fileList(1).name);
             else
-                % 检查文件是否存在
                 if ~exist(filePath, 'file')
                     error('LoadData:FileNotFound', '文件不存在: %s', filePath);
                 end
