@@ -1,4 +1,3 @@
-% 绘制OCV曲线（保持不变）
 all_soc = [];
 all_ocv = [];
 for k = 1:length(prec.SOC_Windows)
@@ -18,7 +17,6 @@ ylabel('OCV (V)');
 title('OCV vs SOC');
 grid on;
 
-% 绘制R0阶梯图（修正后的代码）
 X_stairs = [];
 Y_stairs = [];
 for k = 1:length(prec.SOC_Windows)
@@ -34,7 +32,6 @@ ylabel('R0 (Ohm)');
 title('R0 vs SOC');
 grid on;
 
-% 合并显示（可选）
 figure;
 yyaxis left;
 plot(sorted_soc, sorted_ocv, 'b-', 'LineWidth', 1.5);
