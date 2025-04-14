@@ -34,9 +34,9 @@ methods
         max_value=max(SOC_List);
         temp_value=max_value-100;
         for k = 1:length(SOC_List)
-            SOC_List(k)=SOC_List(k)-temp_value;
+            SOC_List(k)=max(0,SOC_List(k)-temp_value);
         end
-        obj.SOC_Status = SOC_List(:);
+        obj.SOC_Status = SOC_List();
     end
 
 

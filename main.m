@@ -11,74 +11,73 @@ end
 
 verifyModel(prec, data);
 
-
 function rmse = verifyModel(prec, data)
-    % ===== 1. 预分配内存 =====
-    total_points = 0;
-    for k = 1:length(prec.SOC_Windows)
-        window = prec.SOC_Windows(k);
-        if ~isempty(window.rowInfo) && ~window.skip
-            total_points = total_points + length(window.rowInfo);
-        end
+    % 获取原始数据
+    t = data.TestTime;    % 时间序列
+    I = data.Amps;        % 电流
+    V_actual = data.Volts; % 实际电压
+    S = prec.SOC_Status;   % SOC
+
+    % 检查数据长度一致性
+    if length(S) ~= length(t)
+        error('SOC_Status长度 (%d) 与数据行数 (%d) 不匹配', length(S), length(t));
     end
-    
-    V_actual = zeros(total_points, 1);
-    V_predicted = zeros(total_points, 1);
-    ptr = 1; % 当前写入位置指针
-    
-    % ===== 2. 遍历所有窗口填充数据 =====
-    for k = 1:length(prec.SOC_Windows)
-        window = prec.SOC_Windows(k);
-        if isempty(window.rowInfo) || window.skip
-            continue;
+
+    % 初始化预测电压数组
+    V_predicted = zeros(size(V_actual));
+    V_RC = 0; % 初始 V_RC，设为 0，可根据需要调整
+
+    % 按时间顺序遍历
+    for k = 1:length(t)
+        soc = S(k);
+        % 找到对应的 SOC 窗口
+        window_idx = find([prec.SOC_Windows.range_lower] <= soc & ...
+                          [prec.SOC_Windows.range_upper] >= soc, 1);
+        if isempty(window_idx)
+            error('SOC %.2f%% 超出窗口范围', soc);
         end
-        
-        t = [window.rowInfo.TestTime]';
-        I = [window.rowInfo.Amps]';
-        S = window.SOC';
-        V_meas = [window.rowInfo.Volts]';
-        
-        try
-            V_model = window.predict(window.oth, t, I, S);
-            
-            % 严格校验数据长度
-            if length(V_model) ~= length(V_meas)
-                warning('窗口 %d 预测数据长度不匹配（实际=%d，预测=%d），已跳过', ...
-                    k, length(V_meas), length(V_model));
+        window = prec.SOC_Windows(window_idx);
+
+        % 获取参数
+        if isempty(window.oth)
+            error('SOC %.2f%% 没有对应的参数', soc);
+        end
+        OCV1 = window.oth(1);
+        OCV2 = window.oth(2);
+        R0 = window.oth(3);
+        R1 = window.oth(4);
+        tau1 = window.oth(5);
+
+        % 计算 OCV
+        OCV = OCV1 * soc + OCV2;
+
+        % 计算 V_RC（时间递推）
+        if k > 1
+            dt = t(k) - t(k-1);
+            if dt <= 0
+                warning('时间步长非正: dt = %.2f s at k = %d', dt, k);
+                V_predicted(k) = V_predicted(k-1); % 使用上一时刻值
                 continue;
             end
-        catch ME
-            fprintf('窗口 %d 预测失败: %s\n', k, ME.message);
-            continue;
+            dV_RC = (I(k-1) * R1 - V_RC) / tau1;
+            V_RC = V_RC + dt * dV_RC;
         end
-        
-        % 填充到预分配数组
-        n = length(V_meas);
-        V_actual(ptr:ptr+n-1) = V_meas;
-        V_predicted(ptr:ptr+n-1) = V_model;
-        ptr = ptr + n;
+
+        % 计算预测电压
+        V_predicted(k) = OCV - I(k) * R0 - V_RC;
     end
-    
-    % ===== 3. 裁剪未使用的空间 =====
-    V_actual = V_actual(1:ptr-1);
-    V_predicted = V_predicted(1:ptr-1);
-    
-    % ===== 4. 计算RMSE =====
-    if isempty(V_actual)
-        error('无有效数据可用于验证');
-    end
-    fprintf('实际电压范围: [%.2f V, %.2f V]\n', min(V_actual), max(V_actual));
-    fprintf('预测电压范围: [%.2f V, %.2f V]\n', min(V_predicted), max(V_predicted));
+
+    % 计算 RMSE
     rmse = sqrt(mean((V_actual - V_predicted).^2));
     fprintf('全局电压预测 RMSE: %.4f V\n', rmse);
-    
-    % ... (绘图部分保持不变)
+
+    % 可视化
     figure;
-    plot(V_actual, 'b', 'DisplayName', '实际电压');
+    plot(t, V_actual, 'b', 'DisplayName', '实际电压');
     hold on;
-    plot(V_predicted, 'r--', 'DisplayName', '预测电压');
-    xlabel('数据点序号');
+    plot(t, V_predicted, 'r--', 'DisplayName', '预测电压');
+    xlabel('时间 (s)');
     ylabel('电压 (V)');
     legend;
-    title('实际电压 vs 模型预测电压');
+    title('实际电压 vs 预测电压');
 end
