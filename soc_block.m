@@ -95,43 +95,101 @@ classdef soc_block
             end
         end
 
-        function obj = fminconTest(obj)
+        function obj = fminconTest(obj, prev_R0)
             data = obj.rowInfo;
             t = [data.TestTime]';
             I = [data.Amps]';
             V_meas = [data.Volts]';
             S = obj.SOC;
             
+            % 参数检查
             if ~isequal(length(t), length(I), length(V_meas), length(S))
-                error('t, I, V_meas, S 的长度必须一致！');
-            end
-            if ~isnumeric(t) || ~isnumeric(I) || ~isnumeric(V_meas) || ~isnumeric(S)
-                error('t, I, V_meas, S 必须是数值类型！');
+                error('输入数据长度不一致');
             end
             
+            % 初始化参数和约束
             if isnan(obj.R0)
-                param0 = [0, mean(V_meas), 0.01, 0.01, 5, 0];
-                lb = [-1, 3.0, 0.001, 0.001, 10, -4.2];  % 下界
-                ub = [1, 4.2, 0.1, 0.1, 100, 4.2];       % 上界
-                disp('R0未初始化，统一计算');
+                param0 = [0.001, 3.5, 0.01, 0.01, 10, 0]; % 更合理的初始猜测
+                lb = [0,    3.0, 0.001, 0.001, 1,   -4.2]; 
+                ub = [0.1,  4.2, Inf,   0.1,   100, 4.2]; 
             else
-                param0 = [0, mean(V_meas), obj.R0, 0.01, 5, 0];
-                lb = [-1, 3.0, obj.R0*0.99, 0, 10, -4.2];
-                ub = [1, 4.2, obj.R0*1.01, 0.1, 1000, 4.2];
-                disp('R0已初始化');
+                param0 = [0.001, mean(V_meas), obj.R0, 0.01, 10, 0];
+                lb = [0,    3.0, max(0.001, obj.R0*0.95), 0,     1,   -4.2]; 
+                ub = [0.1,  4.2, min(prev_R0, obj.R0*1.05), 0.1, 100, 4.2]; 
             end
             
+            % 强制确保 lb ≤ ub（关键修复）
+            for i = 1:length(lb)
+                if lb(i) > ub(i)
+                    ub(i) = lb(i) + 1e-6; % 微小偏移避免数值问题
+                    warning('调整窗口 [%.1f%%-%.1f%%] 参数 %d 的边界: lb=%.3f, ub=%.3f', ...
+                        obj.range_lower, obj.range_upper, i, lb(i), ub(i));
+                end
+            end
+            
+            % 线性约束：OCV(SOC=0) >=3.0 且 OCV(SOC=100) <=4.2
+            A = [0, 1, 0, 0, 0, 0;       % OCV2 >=3.0
+                 100, 1, 0, 0, 0, 0];    % 100*OCV1 + OCV2 <=4.2
+            b = [3.0; 4.2];
+            
+            % 初始条件约束
             Aeq = [S(1), 1, -I(1), 0, 0, -1];
             beq = V_meas(1);
             
-            options = optimset('Display', 'iter', 'MaxIter', 500);
-            [param_opt, fval] = fmincon(@(x) obj.compute_RMSE(x, t, I, V_meas, S), ...
-                param0, [], [], Aeq, beq, lb, ub, [], options);
-            
-            if isnan(obj.R0)
-                obj.R0 = param_opt(3);
+            options = optimoptions('fmincon', 'Display', 'iter', 'MaxIterations', 500);
+            try
+                [param_opt, ~, exitflag] = fmincon(@(x) obj.compute_RMSE(x, t, I, V_meas, S), ...
+                    param0, A, b, Aeq, beq, lb, ub, [], options);
+                
+                if exitflag <= 0
+                    warning('窗口 [%.1f%%-%.1f%%] 优化失败，退出标志: %d', ...
+                        obj.range_lower, obj.range_upper, exitflag);
+                    obj.skip = 1;
+                    return;
+                end
+            catch ME
+                warning('窗口 [%.1f%%-%.1f%%] 优化异常: %s', ...
+                    obj.range_lower, obj.range_upper, ME.message);
+                obj.skip = 1;
+                return;
             end
+            
             obj.oth = param_opt;
+            obj.R0 = param_opt(3); % 更新R0
+        end
+
+       function V_model = predict(obj, params, t, I, S)
+            % 输入参数检查
+            if length(t) ~= length(I) || length(t) ~= length(S)
+                error('输入数据长度不一致');
+            end
+            
+            % 解包参数
+            OCV1 = params(1);
+            OCV2 = params(2);
+            R0 = params(3);
+            R1 = params(4);
+            tau1 = params(5);
+            V_RC_init = params(6);
+            
+            % 初始化RC电压
+            N = length(t);
+            V_RC = zeros(N, 1);
+            V_RC(1) = V_RC_init;
+            
+            % 递推计算RC电压
+            for k = 2:N
+                dt = t(k) - t(k-1);          % 时间间隔（秒）
+                dV_RC = (I(k-1)*R1 - V_RC(k-1)) / tau1;
+                V_RC(k) = V_RC(k-1) + dt * dV_RC;
+            end
+            
+            % 计算模型电压
+            OCV = OCV1 * S + OCV2;          % OCV = SOC*OCV1 + OCV2
+            V_model = OCV - I .* R0 - V_RC; % 模型电压 = OCV - IR0 - V_RC
+            
+            % 确保输出为列向量
+            V_model = reshape(V_model, [], 1);
         end
         
         function error = compute_RMSE(obj, x, t, I, V_meas, S)

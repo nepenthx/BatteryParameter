@@ -62,5 +62,39 @@ methods
             obj.SOC_Windows(i) = current_window;
         end
     end
+
+    function verifyModel(prec, data)
+        V_actual = [];
+        V_predicted = [];
+        
+        for k = 1:length(prec.SOC_Windows)
+            window = prec.SOC_Windows(k);
+            if isempty(window.rowInfo)
+                continue;
+            end
+            t = [window.rowInfo.TestTime]';
+            I = [window.rowInfo.Amps]';
+            S = window.SOC';
+            V_meas = [window.rowInfo.Volts]';
+            params = window.oth;
+            
+            V_model = window.predict(params, t, I, S);
+            
+            V_actual = [V_actual; V_meas];
+            V_predicted = [V_predicted; V_model];
+        end
+        
+        rmse = sqrt(mean((V_actual - V_predicted).^2));
+        fprintf('RMSE: %.4f V\n', rmse);
+        
+        figure;
+        plot(V_actual, 'b', 'DisplayName', '实际电压');
+        hold on;
+        plot(V_predicted, 'r', 'DisplayName', '预测电压');
+        xlabel('数据点');
+        ylabel('电压 (V)');
+        legend;
+        title('电压比较');
+    end
 end
 end
