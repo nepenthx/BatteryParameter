@@ -36,7 +36,7 @@ methods
         for k = 1:length(SOC_List)
             SOC_List(k)=SOC_List(k)-temp_value;
         end
-        obj.SOC_Status = SOC_List;
+        obj.SOC_Status = SOC_List(:);
     end
 
 

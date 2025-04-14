@@ -1,3 +1,35 @@
+classdef config < handle 
+    properties
+        SOC0
+        C0 
+        SOC_Window_Granularity
+    end
+    
+    properties (Access = private)
+        Instance = []
+    end
+    
+    methods (Access = private)
+        function obj = config(SOC0, C0, SOC_Window_Granularity)
+            if nargin > 0
+                obj.SOC0 = SOC0;
+                obj.C0 = C0;
+                obj.SOC_Window_Granularity = SOC_Window_Granularity;
+            end
+        end
+    end
+    
+    methods (Static)
+        function singleObj = getInstance()
+            persistent localObj
+            if isempty(localObj) || ~isvalid(localObj)
+                localObj = config(100, 4.3635, 5);
+            end
+            singleObj = localObj;
+        end
+    end
+end
+
 classdef LoadData
     properties (SetAccess = private)
         DataTable      % 存储完整数据表格
@@ -70,7 +102,7 @@ classdef LoadData
         function value = get.Amps(obj),      value = obj.DataTable.Amps;      end
         function value = get.Volts(obj),     value = obj.DataTable.Volts;     end
     end
-end
+
 
 data=LoadData;
 prec = preconditioningData;
@@ -86,54 +118,67 @@ end
 verifyModel(prec, data);
 
 
-function verifyModel(prec, data)
-    V_actual = [];
-    V_predicted = [];
-    
+function rmse = verifyModel(prec, data)
+    % ===== 1. 预分配内存 =====
+    total_points = 0;
     for k = 1:length(prec.SOC_Windows)
         window = prec.SOC_Windows(k);
-        
-        % 跳过无效窗口
-        if isempty(window.rowInfo) || window.skip
-            fprintf('跳过窗口 [%.1f%%-%.1f%%]\n', window.range_lower, window.range_upper);
-            continue;
+        if ~isempty(window.rowInfo) && ~window.skip
+            total_points = total_points + length(window.rowInfo);
         end
-        
-        % 提取数据并转为列向量
-        t = reshape([window.rowInfo.TestTime], [], 1);
-        I = reshape([window.rowInfo.Amps], [], 1);
-        S = reshape(window.SOC, [], 1);
-        V_meas = reshape([window.rowInfo.Volts], [], 1);
-        
-        % 检查数据长度
-        if ~isequal(length(t), length(I), length(S), length(V_meas))
-            fprintf('窗口 [%.1f%%-%.1f%%] 数据长度不一致，已跳过\n', ...
-                window.range_lower, window.range_upper);
-            continue;
-        end
-        
-        % 调用预测方法
-        try
-            V_model = window.predict(window.oth, t, I, S);
-        catch ME
-            fprintf('窗口 [%.1f%%-%.1f%%] 预测失败: %s\n', ...
-                window.range_lower, window.range_upper, ME.message);
-            continue;
-        end
-        
-        % 垂直拼接
-        V_actual = [V_actual; V_meas];
-        V_predicted = [V_predicted; V_model];
     end
     
-    % 计算RMSE
+    V_actual = zeros(total_points, 1);
+    V_predicted = zeros(total_points, 1);
+    ptr = 1; % 当前写入位置指针
+    
+    % ===== 2. 遍历所有窗口填充数据 =====
+    for k = 1:length(prec.SOC_Windows)
+        window = prec.SOC_Windows(k);
+        if isempty(window.rowInfo) || window.skip
+            continue;
+        end
+        
+        t = [window.rowInfo.TestTime]';
+        I = [window.rowInfo.Amps]';
+        S = window.SOC';
+        V_meas = [window.rowInfo.Volts]';
+        
+        try
+            V_model = window.predict(window.oth, t, I, S);
+            
+            % 严格校验数据长度
+            if length(V_model) ~= length(V_meas)
+                warning('窗口 %d 预测数据长度不匹配（实际=%d，预测=%d），已跳过', ...
+                    k, length(V_meas), length(V_model));
+                continue;
+            end
+        catch ME
+            fprintf('窗口 %d 预测失败: %s\n', k, ME.message);
+            continue;
+        end
+        
+        % 填充到预分配数组
+        n = length(V_meas);
+        V_actual(ptr:ptr+n-1) = V_meas;
+        V_predicted(ptr:ptr+n-1) = V_model;
+        ptr = ptr + n;
+    end
+    
+    % ===== 3. 裁剪未使用的空间 =====
+    V_actual = V_actual(1:ptr-1);
+    V_predicted = V_predicted(1:ptr-1);
+    
+    % ===== 4. 计算RMSE =====
     if isempty(V_actual)
         error('无有效数据可用于验证');
     end
+    fprintf('实际电压范围: [%.2f V, %.2f V]\n', min(V_actual), max(V_actual));
+    fprintf('预测电压范围: [%.2f V, %.2f V]\n', min(V_predicted), max(V_predicted));
     rmse = sqrt(mean((V_actual - V_predicted).^2));
-    fprintf('全局电压预测RMSE: %.4f V\n', rmse);
+    fprintf('全局电压预测 RMSE: %.4f V\n', rmse);
     
-    % 绘图
+    % ... (绘图部分保持不变)
     figure;
     plot(V_actual, 'b', 'DisplayName', '实际电压');
     hold on;
@@ -144,6 +189,106 @@ function verifyModel(prec, data)
     title('实际电压 vs 模型预测电压');
 end
 
+%预处理实验数据，获取必要的数据
+%划分SOC窗口，并且根据窗口分别计算数据
+%需要计算SOC，用安时积分
+classdef preconditioningData
+properties
+    SOC_Status
+    SOC_Windows
+end
+methods
+
+    function obj= init(obj,data)
+        obj=obj.calculateSoc(data);
+        obj=obj.getSOCWindows(data);
+    end
+    function obj = calculateSoc(obj,data) 
+        SOC0 = config.getInstance().SOC0; 
+        capacity = config.getInstance().C0; 
+    
+        time = data.TestTime;
+        current = data.Amps; 
+    
+        dt = diff(time)/3600; 
+        SOC = SOC0; 
+        SOC_List = zeros(size(time));
+        SOC_List(1) = SOC;
+    
+        for k = 2:length(time)
+            delta_Q = current(k-1) * dt(k-1); 
+            SOC = SOC + (delta_Q / capacity) * 100; 
+            %SOC = max(0, min(SOC, 100));
+            SOC_List(k) = SOC;
+        end
+
+        max_value=max(SOC_List);
+        temp_value=max_value-100;
+        for k = 1:length(SOC_List)
+            SOC_List(k)=SOC_List(k)-temp_value;
+        end
+        obj.SOC_Status = SOC_List(:);
+    end
+
+
+    function obj = getSOCWindows(obj, data)
+        window_size = config.getInstance().SOC_Window_Granularity;
+        soc_edges = 0:window_size:100;
+        
+        num_windows = length(soc_edges) - 1;
+        obj.SOC_Windows = repmat(soc_block(), 1, num_windows);
+        for i = 1:num_windows
+            lower = soc_edges(i);
+            upper = soc_edges(i+1);
+            
+            current_window = soc_block(lower, upper);
+            
+            if i == num_windows
+                mask = (obj.SOC_Status >= lower) & (obj.SOC_Status <= upper);
+            else
+                mask = (obj.SOC_Status >= lower) & (obj.SOC_Status < upper);
+            end
+            current_window.indices = find(mask);            
+            current_window.SOC = obj.SOC_Status(current_window.indices); 
+            obj.SOC_Windows(i) = current_window;
+        end
+    end
+
+    function verifyModel(prec, data)
+        V_actual = [];
+        V_predicted = [];
+        
+        for k = 1:length(prec.SOC_Windows)
+            window = prec.SOC_Windows(k);
+            if isempty(window.rowInfo)
+                continue;
+            end
+            t = [window.rowInfo.TestTime]';
+            I = [window.rowInfo.Amps]';
+            S = window.SOC';
+            V_meas = [window.rowInfo.Volts]';
+            params = window.oth;
+            
+            V_model = window.predict(params, t, I, S);
+            
+            V_actual = [V_actual; V_meas];
+            V_predicted = [V_predicted; V_model];
+        end
+        
+        rmse = sqrt(mean((V_actual - V_predicted).^2));
+        fprintf('RMSE: %.4f V\n', rmse);
+        
+        figure;
+        plot(V_actual, 'b', 'DisplayName', '实际电压');
+        hold on;
+        plot(V_predicted, 'r', 'DisplayName', '预测电压');
+        xlabel('数据点');
+        ylabel('电压 (V)');
+        legend;
+        title('电压比较');
+    end
+end
+end
 
 classdef soc_block
     properties
@@ -240,6 +385,8 @@ classdef soc_block
                 tempStruct = data.getRow(obj.indices(i));
                 obj.rowInfo(i) = tempStruct;
             end
+            obj.SOC = obj.SOC(:); 
+
         end
 
         function obj = fminconTest(obj, prev_R0)
@@ -249,9 +396,15 @@ classdef soc_block
             V_meas = [data.Volts]';
             S = obj.SOC;
             
-            % 参数检查
+            t = t(:);
+            I = I(:);
+            V_meas = V_meas(:);
+            S = obj.SOC(:);   
             if ~isequal(length(t), length(I), length(V_meas), length(S))
                 error('输入数据长度不一致');
+            endif ~isequal(length(t), length(I), length(V_meas), length(S))
+                error('输入数据长度不一致: t=%d, I=%d, V_meas=%d, S=%d',...
+                    length(t), length(I), length(V_meas), length(S));
             end
             
             % 初始化参数和约束
@@ -305,13 +458,11 @@ classdef soc_block
             obj.R0 = param_opt(3); % 更新R0
         end
 
-       function V_model = predict(obj, params, t, I, S)
-            % 输入参数检查
-            if length(t) ~= length(I) || length(t) ~= length(S)
-                error('输入数据长度不一致');
-            end
+        function V_model = predict(obj, params, t, I, S)
+            t = t(:);
+            I = I(:);
+            S = S(:); 
             
-            % 解包参数
             OCV1 = params(1);
             OCV2 = params(2);
             R0 = params(3);
@@ -319,24 +470,19 @@ classdef soc_block
             tau1 = params(5);
             V_RC_init = params(6);
             
-            % 初始化RC电压
             N = length(t);
             V_RC = zeros(N, 1);
             V_RC(1) = V_RC_init;
             
-            % 递推计算RC电压
             for k = 2:N
-                dt = t(k) - t(k-1);          % 时间间隔（秒）
+                dt = t(k) - t(k-1);
                 dV_RC = (I(k-1)*R1 - V_RC(k-1)) / tau1;
                 V_RC(k) = V_RC(k-1) + dt * dV_RC;
             end
             
-            % 计算模型电压
-            OCV = OCV1 * S + OCV2;          % OCV = SOC*OCV1 + OCV2
-            V_model = OCV - I .* R0 - V_RC; % 模型电压 = OCV - IR0 - V_RC
+            OCV = OCV1 * S + OCV2;  
+            V_model = OCV - I .* R0 - V_RC; 
             
-            % 确保输出为列向量
-            V_model = reshape(V_model, [], 1);
         end
         
         function error = compute_RMSE(obj, x, t, I, V_meas, S)
@@ -362,105 +508,4 @@ classdef soc_block
             error = sqrt(mean((V_meas - V_model).^2));
         end
     end
-end
-
-%预处理实验数据，获取必要的数据
-%划分SOC窗口，并且根据窗口分别计算数据
-%需要计算SOC，用安时积分
-classdef preconditioningData
-properties
-    SOC_Status
-    SOC_Windows
-end
-methods
-
-    function obj= init(obj,data)
-        obj=obj.calculateSoc(data);
-        obj=obj.getSOCWindows(data);
-    end
-    function obj = calculateSoc(obj,data) 
-        SOC0 = config.getInstance().SOC0; 
-        capacity = config.getInstance().C0; 
-    
-        time = data.TestTime;
-        current = data.Amps; 
-    
-        dt = diff(time)/3600; 
-        SOC = SOC0; 
-        SOC_List = zeros(size(time));
-        SOC_List(1) = SOC;
-    
-        for k = 2:length(time)
-            delta_Q = current(k-1) * dt(k-1); 
-            SOC = SOC + (delta_Q / capacity) * 100; 
-            %SOC = max(0, min(SOC, 100));
-            SOC_List(k) = SOC;
-        end
-
-        max_value=max(SOC_List);
-        temp_value=max_value-100;
-        for k = 1:length(SOC_List)
-            SOC_List(k)=SOC_List(k)-temp_value;
-        end
-        obj.SOC_Status = SOC_List;
-    end
-
-
-    function obj = getSOCWindows(obj, data)
-        window_size = config.getInstance().SOC_Window_Granularity;
-        soc_edges = 0:window_size:100;
-        
-        num_windows = length(soc_edges) - 1;
-        obj.SOC_Windows = repmat(soc_block(), 1, num_windows);
-        for i = 1:num_windows
-            lower = soc_edges(i);
-            upper = soc_edges(i+1);
-            
-            current_window = soc_block(lower, upper);
-            
-            if i == num_windows
-                mask = (obj.SOC_Status >= lower) & (obj.SOC_Status <= upper);
-            else
-                mask = (obj.SOC_Status >= lower) & (obj.SOC_Status < upper);
-            end
-            current_window.indices = find(mask);            
-            current_window.SOC = obj.SOC_Status(current_window.indices); 
-            obj.SOC_Windows(i) = current_window;
-        end
-    end
-
-    function verifyModel(prec, data)
-        V_actual = [];
-        V_predicted = [];
-        
-        for k = 1:length(prec.SOC_Windows)
-            window = prec.SOC_Windows(k);
-            if isempty(window.rowInfo)
-                continue;
-            end
-            t = [window.rowInfo.TestTime]';
-            I = [window.rowInfo.Amps]';
-            S = window.SOC';
-            V_meas = [window.rowInfo.Volts]';
-            params = window.oth;
-            
-            V_model = window.predict(params, t, I, S);
-            
-            V_actual = [V_actual; V_meas];
-            V_predicted = [V_predicted; V_model];
-        end
-        
-        rmse = sqrt(mean((V_actual - V_predicted).^2));
-        fprintf('RMSE: %.4f V\n', rmse);
-        
-        figure;
-        plot(V_actual, 'b', 'DisplayName', '实际电压');
-        hold on;
-        plot(V_predicted, 'r', 'DisplayName', '预测电压');
-        xlabel('数据点');
-        ylabel('电压 (V)');
-        legend;
-        title('电压比较');
-    end
-end
 end

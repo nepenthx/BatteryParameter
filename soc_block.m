@@ -93,6 +93,8 @@ classdef soc_block
                 tempStruct = data.getRow(obj.indices(i));
                 obj.rowInfo(i) = tempStruct;
             end
+            obj.SOC = obj.SOC(:); 
+
         end
 
         function obj = fminconTest(obj, prev_R0)
@@ -102,9 +104,14 @@ classdef soc_block
             V_meas = [data.Volts]';
             S = obj.SOC;
             
-            % 参数检查
+            t = t(:);
+            I = I(:);
+            V_meas = V_meas(:);
+            S = obj.SOC(:);   
+           
             if ~isequal(length(t), length(I), length(V_meas), length(S))
-                error('输入数据长度不一致');
+                error('输入数据长度不一致: t=%d, I=%d, V_meas=%d, S=%d',...
+                    length(t), length(I), length(V_meas), length(S));
             end
             
             % 初始化参数和约束
@@ -158,13 +165,11 @@ classdef soc_block
             obj.R0 = param_opt(3); % 更新R0
         end
 
-       function V_model = predict(obj, params, t, I, S)
-            % 输入参数检查
-            if length(t) ~= length(I) || length(t) ~= length(S)
-                error('输入数据长度不一致');
-            end
+        function V_model = predict(obj, params, t, I, S)
+            t = t(:);
+            I = I(:);
+            S = S(:); 
             
-            % 解包参数
             OCV1 = params(1);
             OCV2 = params(2);
             R0 = params(3);
@@ -172,24 +177,19 @@ classdef soc_block
             tau1 = params(5);
             V_RC_init = params(6);
             
-            % 初始化RC电压
             N = length(t);
             V_RC = zeros(N, 1);
             V_RC(1) = V_RC_init;
             
-            % 递推计算RC电压
             for k = 2:N
-                dt = t(k) - t(k-1);          % 时间间隔（秒）
+                dt = t(k) - t(k-1);
                 dV_RC = (I(k-1)*R1 - V_RC(k-1)) / tau1;
                 V_RC(k) = V_RC(k-1) + dt * dV_RC;
             end
             
-            % 计算模型电压
-            OCV = OCV1 * S + OCV2;          % OCV = SOC*OCV1 + OCV2
-            V_model = OCV - I .* R0 - V_RC; % 模型电压 = OCV - IR0 - V_RC
+            OCV = OCV1 * S + OCV2;  
+            V_model = OCV - I .* R0 - V_RC; 
             
-            % 确保输出为列向量
-            V_model = reshape(V_model, [], 1);
         end
         
         function error = compute_RMSE(obj, x, t, I, V_meas, S)
