@@ -18,30 +18,26 @@ classdef LoadData
     
     methods
         function obj = LoadData(filePath)
-            % 构造函数：支持 CSV 文件
             if nargin < 1
-                % 默认读取当前目录下的第一个 CSV 文件
                 fileList = dir('*.csv');
                 if isempty(fileList)
                     error('LoadData:FileNotFound', '未找到 CSV 文件');
                 end
                 obj.FilePath = fullfile(pwd, fileList(1).name);
             else
-                % 检查文件是否存在
                 if ~exist(filePath, 'file')
                     error('LoadData:FileNotFound', '文件不存在: %s', filePath);
                 end
                 obj.FilePath = filePath;
             end
-            obj = obj.readData();  % 调用数据读取方法
+            obj = obj.readData();  
         end
         
         function obj = readData(obj)
-            % 读取 CSV 数据并验证列名
             try
                 tbl = readtable(obj.FilePath, ...
                     'Delimiter', ',', ...          
-                    'VariableNamingRule', 'preserve'); % 保留原始列名
+                    'VariableNamingRule', 'preserve'); 
             catch ME
                 error('LoadData:ReadError', 'CSV 文件读取失败: %s', ME.message);
             end
@@ -55,9 +51,14 @@ classdef LoadData
             
             obj.DataTable = tbl(:, requiredCols);
         end
+        function rowData = getRow(obj, idx)
+            validateattributes(idx, {'numeric'}, ...
+                {'scalar', 'positive', 'integer', '<=', height(obj.DataTable)});
+    
+            rowData = table2struct(obj.DataTable(idx, :));
+        end
     end
     
-    % Dependent 属性的 get 方法
     methods
         function value = get.Rec(obj),       value = obj.DataTable.Rec;       end
         function value = get.Cyc(obj),       value = obj.DataTable.Cyc;       end
