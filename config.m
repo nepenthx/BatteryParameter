@@ -3,6 +3,7 @@ classdef config < handle
         SOC0
         C0 
         SOC_Window_Granularity
+        openLog
     end
     
     properties (Access = private)
@@ -18,14 +19,40 @@ classdef config < handle
             end
         end
     end
+
+    methods
+        function set.SOC0(obj, value)
+            validateattributes(value, {'numeric'}, {'scalar', '>=', 0, '<=', 100});
+            obj.SOC0 = value;
+        end
+        
+        function set.C0(obj, value)
+            validateattributes(value, {'numeric'}, {'scalar', '>', 0});
+            obj.C0 = value;
+        end
+        
+        function set.SOC_Window_Granularity(obj, value)
+            validateattributes(value, {'numeric'}, {'scalar', '>', 0});
+            obj.SOC_Window_Granularity = value;
+        end
+        
+        function set.openLog(obj, value)
+            validateattributes(value, {'logical'}, {'scalar'});
+            obj.openLog = value;
+        end
+
+        
+    end
     
     methods (Static)
         function singleObj = getInstance()
             persistent localObj
             if isempty(localObj) || ~isvalid(localObj)
-                localObj = config(100, 4.3635, 5);
+                localObj = config(100,  4.3635, 5);
             end
             singleObj = localObj;
         end
+
+        
     end
 end
