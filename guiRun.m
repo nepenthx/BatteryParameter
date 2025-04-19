@@ -70,18 +70,15 @@ function rmse = verifyModel(app,prec,data)
             V_RC = V_RC + dt * dV_RC;
         end
 
-        % 计算预测电压
         V_predicted(k) = OCV - I(k) * R0 - V_RC;
     end
 
-    % 计算 RMSE
     rmse = sqrt(mean((V_actual - V_predicted).^2));
     text="全局电压预测 RMSE:"+rmse;
     app.showResult(text);
 
     cla(app.UIAxes_2);
-    
-    % 绘制新图表
+
     plot(app.UIAxes_2, t, V_actual, 'b', 'DisplayName', '实际电压');
     hold(app.UIAxes_2, 'on');
     plot(app.UIAxes_2, t, V_predicted, 'r--', 'DisplayName', '预测电压');
