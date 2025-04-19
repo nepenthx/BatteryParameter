@@ -143,7 +143,7 @@ classdef soc_block
             Aeq = [S(1), 1, -I(1), 0, 0, -1];
             beq = V_meas(1);
             
-            options = optimoptions('fmincon', 'Display', 'iter', 'MaxIterations', 500);
+            options = optimoptions('fmincon', 'display', 'iter', 'MaxIterations', 500);
             try
                 [param_opt, ~, exitflag] = fmincon(@(x) obj.compute_RMSE(x, t, I, V_meas, S), ...
                     param0, A, b, Aeq, beq, lb, ub, [], options);

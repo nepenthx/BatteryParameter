@@ -85,7 +85,7 @@ methods
         end
         
         rmse = sqrt(mean((V_actual - V_predicted).^2));
-        fprintf('RMSE: %.4f V\n', rmse);
+        disp('RMSE: %.4f V\n', rmse);
         
         figure;
         plot(V_actual, 'b', 'DisplayName', '实际电压');

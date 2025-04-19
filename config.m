@@ -16,6 +16,7 @@ classdef config < handle
                 obj.SOC0 = SOC0;
                 obj.C0 = C0;
                 obj.SOC_Window_Granularity = SOC_Window_Granularity;
+                obj.openLog = false;
             end
         end
     end
