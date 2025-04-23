@@ -30,7 +30,7 @@ classdef soc_block
             %   avg_points：跳变前后取平均的点数（默认 3）
             % 输出：
             %   obj：更新后的对象，包含该 SOC 区间的 R0
-        
+            %rmoutliers()移除偏差过大值
             if nargin < 2 || isempty(threshold)
                 threshold = 0.5;
             end
@@ -75,6 +75,7 @@ classdef soc_block
             end
         
             if ~isempty(R0_values)
+                R0_values=rmoutliers(R0_values);
                 obj.R0 = mean(R0_values);
             else
                 obj.R0 = NaN; 
@@ -117,15 +118,14 @@ classdef soc_block
             % 初始化参数和约束
             if isnan(obj.R0)
                 param0 = [0.001, 3.5, 0.01, 0.01, 10, 0]; 
-                lb = [0,    2.7, 0.001, 0.001, 1,   -4.2]; 
-                ub = [0.1,  4.2, 0.1,   0.1,   100, 4.2]; 
+                lb = [0,0, 0, 0, 0,   -4.2]; 
+                ub = [Inf,Inf,1,1,   100, 4.2]; 
             else
                 param0 = [0.001, mean(V_meas), obj.R0, 0.01, 10, 0];
-                lb = [0,    2.7, max(0.001, obj.R0*0.95), 0,     1,   -4.2]; 
-                ub = [0.1,  4.2, min(prev_R0, obj.R0*1.05), 0.1, 100, 4.2]; 
+                lb = [0, 0, obj.R0, 0,     0,   -4.2]; 
+                ub = [Inf,  Inf, obj.R0, 1, 100, 4.2]; 
             end
             
-            % 强制确保 lb ≤ ub（关键修复）
             for i = 1:length(lb)
                 if lb(i) > ub(i)
                     ub(i) = lb(i) + 1e-6; % 微小偏移避免数值问题
@@ -134,10 +134,11 @@ classdef soc_block
                 end
             end
             
-            % 线性约束：OCV(SOC=0) >=3.0 且 OCV(SOC=100) <=4.2
-            A = [0, 1, 0, 0, 0, 0;       % OCV2 >=3.0
-                 100, 1, 0, 0, 0, 0];    % 100*OCV1 + OCV2 <=4.2
-            b = [2.7; 4.2];
+            % 线性约束：OCV(SOC=0) >=2.7 且 OCV(SOC=100) <=4.2
+            A = [-(obj.range_lower+obj.range_upper)/2, -1, 0, 0, 0, 0;       % OCV2 >=2.7
+            (obj.range_lower+obj.range_upper)/2, 1, 0, 0, 0, 0;  % 100*OCV1 + OCV2 <=4.2
+            (obj.range_lower+obj.range_upper)/2, 1, 0, 0, 0, 0];   % -OCV1*S_j - OCV2 <= - max V(S_j(ii-1))     OCV(i)>OCV(ii-1)>V(ii-1) . (保证单调性)
+            b = [-2.7; 4.2,vmean1];
             
             % 初始条件约束
             Aeq = [S(1), 1, -I(1), 0, 0, -1];
