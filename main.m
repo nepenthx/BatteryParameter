@@ -1,15 +1,19 @@
 data=LoadData;
 prec = preconditioningData;
 prec = prec.init(data);
-prev_R0 = Inf; 
+prev_Vmean = Inf; 
 for k = length(prec.SOC_Windows):-1:1
     prec.SOC_Windows(k) = prec.SOC_Windows(k).getAllRow(data);
-    prec.SOC_Windows(k) = prec.SOC_Windows(k).calculateR0();
-    prec.SOC_Windows(k) = prec.SOC_Windows(k).fminconTest(prev_R0);
-    prev_R0 = prec.SOC_Windows(k).R0; 
+    prec.SOC_Windows(k) = prec.SOC_Windows(k).fminconTest(prev_Vmean);
+    volt_temp=prec.SOC_Windows(k).rowInfo.Volts;
+    prev_Vmean = min(volt_temp);
 end
 
-verifyModel(prec, data);
+    verifyModel(prec, data);
+
+
+% 或者如果 R0_lookup_function 是一个独立变量:
+% verifyModel(prec, data, R0_lookup_function);
 
 function rmse = verifyModel(prec, data)
     t = data.TestTime;    % 时间序列

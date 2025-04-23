@@ -4,6 +4,10 @@ classdef config < handle
         C0 
         SOC_Window_Granularity
         openLog
+        Moving_SOC_Window_Width = 10; 
+        Moving_SOC_Window_Step = 5;   
+        R0_Threshold = 0.5;        
+        R0_AvgPoints = 3;       
     end
     
     properties (Access = private)
@@ -41,6 +45,28 @@ classdef config < handle
             validateattributes(value, {'logical'}, {'scalar'});
             obj.openLog = value;
         end
+
+        function set.Moving_SOC_Window_Width(obj, value)
+            validateattributes(value, {'numeric'}, {'scalar', '>', 0});
+            obj.Moving_SOC_Window_Width = value;
+        end
+
+        function set.Moving_SOC_Window_Step(obj, value)
+            validateattributes(value, {'numeric'}, {'scalar', '>', 0});
+            obj.Moving_SOC_Window_Step = value;
+        end
+
+        function set.R0_Threshold(obj, value)
+            validateattributes(value, {'numeric'}, {'scalar', '>=', 0});
+            obj.R0_Threshold = value;
+        end
+
+        function set.R0_AvgPoints(obj, value)
+            validateattributes(value, {'numeric'}, {'scalar', '>', 0});
+            obj.R0_AvgPoints = value;
+        end
+
+        
 
         
     end

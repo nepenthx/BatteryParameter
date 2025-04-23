@@ -67,7 +67,7 @@ classdef LoadData
         function value = get.StepTime(obj),  value = obj.DataTable.StepTime;  end
         function value = get.Amp_hr(obj),    value = obj.DataTable.Amp_hr;    end
         function value = get.Watt_hr(obj),   value = obj.DataTable.Watt_hr;   end
-        function value = get.Amps(obj),      value = obj.DataTable.Amps;      end
+        function value = get.Amps(obj),      value = -obj.DataTable.Amps;      end
         function value = get.Volts(obj),     value = obj.DataTable.Volts;     end
     end
 end
