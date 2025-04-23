@@ -40,26 +40,28 @@ classdef soc_block
         end
 
         function obj = fminconTest(obj, prev_Vmean)
-            % 1) 先把 rowInfo 解包
+            if isempty(obj.rowInfo) || numel([obj.rowInfo.TestTime]) < 2
+                obj.skip = 1;
+                warning('窗口 [%.1f–%.1f%%] 无有效数据，跳过优化',...
+                    obj.range_lower, obj.range_upper);
+                return;
+            end
             data   = obj.rowInfo;
             t      = [data.TestTime]';    % 时间
             I_raw  = [data.Amps]';        % 正=放电，负=充电
             V_meas = [data.Volts]';       % 电压
             S      = obj.SOC(:);          % SOC
         
-            % 2) 构造幅值&符号向量
             I_mag  = abs(I_raw);
             I_mag  = I_mag(:);
             I_sign = sign(I_raw);
             I_sign = I_sign(:);
         
-            % 3) 长度校验
             if ~isequal(length(t), length(I_raw), length(V_meas), length(S))
                 error('输入长度不一致: t=%d, I=%d, V=%d, S=%d', ...
                     length(t), length(I_raw), length(V_meas), length(S));
             end
         
-            % 4) 初始化 param0, lb, ub
             if isnan(obj.R0)
                 param0 = [0.001, 3.5,    0.01, 1, 10, 0];
                 lb     = [0,     0,      0,    0.01, 0,  -4.2];
@@ -70,7 +72,6 @@ classdef soc_block
                 ub     = [0.015, 4.2, obj.R0, 1,       50,  4.2];
             end
         
-            % 5) 检查并调整边界
             for i = 1:numel(lb)
                 if lb(i) > ub(i)
                     ub(i) = lb(i) + 1e-6;
@@ -79,7 +80,6 @@ classdef soc_block
                 end
             end
         
-            % 6) 线性不等式约束 A, b
             if obj.range_upper < 100
                 A = [-(obj.range_lower+obj.range_upper)/2, -1, 0,0,0,0;
                       (obj.range_lower+obj.range_upper)/2,  1, 0,0,0,0];
@@ -90,14 +90,12 @@ classdef soc_block
                 b = [-2.7; 4.2];
             end
         
-            % 7) 线性等式约束 Aeq, beq （用 I_raw(1)）
             I0_raw  = I_raw(1);
             I0_mag  = abs(I0_raw);
             I0_sign = sign(I0_raw);
             Aeq = [ S(1), 1, -I0_sign*I0_mag, 0, 0, -1 ];
             beq = V_meas(1);
         
-            % 8) 调用 fmincon
             options = optimoptions('fmincon','Display','iter','MaxIterations',500);
             try
                 [param_opt, ~, exitflag] = fmincon( ...
@@ -116,7 +114,6 @@ classdef soc_block
                 return;
             end
         
-            % 9) 存回结果
             obj.oth = param_opt;
             obj.R0  = param_opt(3);
         end

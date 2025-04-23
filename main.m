@@ -5,6 +5,9 @@ prev_Vmean = Inf;
 for k = length(prec.SOC_Windows):-1:1
     prec.SOC_Windows(k) = prec.SOC_Windows(k).getAllRow(data);
     prec.SOC_Windows(k) = prec.SOC_Windows(k).fminconTest(prev_Vmean);
+    if(prec.SOC_Windows(k).skip == 1)
+        continue;
+    end
     volt_temp=prec.SOC_Windows(k).rowInfo.Volts;
     prev_Vmean = min(volt_temp);
 end
@@ -38,7 +41,8 @@ function rmse = verifyModel(prec, data)
         window = prec.SOC_Windows(window_idx);
 
         if isempty(window.oth)
-            error('SOC %.2f%% 没有对应的参数', soc);
+            warning('SOC %.2f%% 没有对应的参数', soc);
+            continue
         end
         OCV1 = window.oth(1);
         OCV2 = window.oth(2);
