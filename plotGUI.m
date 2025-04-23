@@ -1,4 +1,9 @@
 function plotR(app,prec) 
+    ax = app.UIAxes;
+    
+    cla(ax, 'reset');
+    
+
     all_soc = [];
     all_ocv = [];
     for k = 1:length(prec.SOC_Windows)
@@ -11,23 +16,26 @@ function plotR(app,prec)
     [sorted_soc, idx] = sort(all_soc);
     sorted_ocv = all_ocv(idx);
 
-    X_stairs = [];
-    Y_stairs = [];
-    for k = 1:length(prec.SOC_Windows)
+    num_windows = length(prec.SOC_Windows);
+    X_stairs = zeros(1, 2 * num_windows);
+    Y_stairs = zeros(1, 2 * num_windows);
+    for k = 1:num_windows
         window = prec.SOC_Windows(k);
-        X_stairs = [X_stairs, window.range_lower, window.range_upper];
-        Y_stairs = [Y_stairs, window.oth(3), window.oth(3)];
+        X_stairs(2*k-1:2*k) = [window.range_lower, window.range_upper];
+        Y_stairs(2*k-1:2*k) = [window.oth(3), window.oth(3)];
     end
-    cla(app.UIAxes);
-    yyaxis left;
-    plot(app.UIAxes, sorted_ocv, 'b-', 'LineWidth', 1.5);
-    ylabel('OCV (V)');
 
-    yyaxis right;
-    stairs(app.UIAxes, Y_stairs, 'r-', 'LineWidth', 1.5);
-    ylabel('R0 (Ohm)');
+    yyaxis(ax, 'left');
+    plot(ax, sorted_soc, sorted_ocv, 'b-', 'LineWidth', 1.5);
+    ylabel(ax, 'OCV (V)');
+    
+    yyaxis(ax, 'right');
+    stairs(ax, X_stairs, Y_stairs, 'r-', 'LineWidth', 1.5);
+    ylabel(ax, 'R0 (Ohm)');
 
-    xlabel('SOC (%)');
-    title('OCV and R0 vs SOC');
-    legend(app.UIAxes, 'show');
+    xlabel(ax, 'SOC (%)');
+    title(ax, 'OCV and R0 vs SOC');
+    legend(ax, {'OCV', 'R0'}, 'Location', 'best');
+    
+    axis(ax, 'tight');
 end

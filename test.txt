@@ -3,6 +3,11 @@ classdef config < handle
         SOC0
         C0 
         SOC_Window_Granularity
+        openLog
+        Moving_SOC_Window_Width = 10; 
+        Moving_SOC_Window_Step = 5;   
+        R0_Threshold = 0.5;        
+        R0_AvgPoints = 3;       
     end
     
     properties (Access = private)
@@ -15,18 +20,67 @@ classdef config < handle
                 obj.SOC0 = SOC0;
                 obj.C0 = C0;
                 obj.SOC_Window_Granularity = SOC_Window_Granularity;
+                obj.openLog = false;
             end
         end
+    end
+
+    methods
+        function set.SOC0(obj, value)
+            validateattributes(value, {'numeric'}, {'scalar', '>=', 0, '<=', 100});
+            obj.SOC0 = value;
+        end
+        
+        function set.C0(obj, value)
+            validateattributes(value, {'numeric'}, {'scalar', '>', 0});
+            obj.C0 = value;
+        end
+        
+        function set.SOC_Window_Granularity(obj, value)
+            validateattributes(value, {'numeric'}, {'scalar', '>', 0});
+            obj.SOC_Window_Granularity = value;
+        end
+        
+        function set.openLog(obj, value)
+            validateattributes(value, {'logical'}, {'scalar'});
+            obj.openLog = value;
+        end
+
+        function set.Moving_SOC_Window_Width(obj, value)
+            validateattributes(value, {'numeric'}, {'scalar', '>', 0});
+            obj.Moving_SOC_Window_Width = value;
+        end
+
+        function set.Moving_SOC_Window_Step(obj, value)
+            validateattributes(value, {'numeric'}, {'scalar', '>', 0});
+            obj.Moving_SOC_Window_Step = value;
+        end
+
+        function set.R0_Threshold(obj, value)
+            validateattributes(value, {'numeric'}, {'scalar', '>=', 0});
+            obj.R0_Threshold = value;
+        end
+
+        function set.R0_AvgPoints(obj, value)
+            validateattributes(value, {'numeric'}, {'scalar', '>', 0});
+            obj.R0_AvgPoints = value;
+        end
+
+        
+
+        
     end
     
     methods (Static)
         function singleObj = getInstance()
             persistent localObj
             if isempty(localObj) || ~isvalid(localObj)
-                localObj = config(100, 4.3635, 5);
+                localObj = config(100,  4.3635, 5);
             end
             singleObj = localObj;
         end
+
+        
     end
 end
 
@@ -99,94 +153,85 @@ classdef LoadData
         function value = get.StepTime(obj),  value = obj.DataTable.StepTime;  end
         function value = get.Amp_hr(obj),    value = obj.DataTable.Amp_hr;    end
         function value = get.Watt_hr(obj),   value = obj.DataTable.Watt_hr;   end
-        function value = get.Amps(obj),      value = obj.DataTable.Amps;      end
+        function value = get.Amps(obj),      value = -obj.DataTable.Amps;      end
         function value = get.Volts(obj),     value = obj.DataTable.Volts;     end
     end
-
+end
 
 data=LoadData;
 prec = preconditioningData;
 prec = prec.init(data);
-prev_R0 = Inf; 
+prev_Vmean = Inf; 
 for k = length(prec.SOC_Windows):-1:1
     prec.SOC_Windows(k) = prec.SOC_Windows(k).getAllRow(data);
-    prec.SOC_Windows(k) = prec.SOC_Windows(k).calculateR0();
-    prec.SOC_Windows(k) = prec.SOC_Windows(k).fminconTest(prev_R0);
-    prev_R0 = prec.SOC_Windows(k).R0; 
+    prec.SOC_Windows(k) = prec.SOC_Windows(k).fminconTest(prev_Vmean);
+    volt_temp=prec.SOC_Windows(k).rowInfo.Volts;
+    prev_Vmean = min(volt_temp);
 end
 
-verifyModel(prec, data);
+    verifyModel(prec, data);
 
+
+% 或者如果 R0_lookup_function 是一个独立变量:
+% verifyModel(prec, data, R0_lookup_function);
 
 function rmse = verifyModel(prec, data)
-    % ===== 1. 预分配内存 =====
-    total_points = 0;
-    for k = 1:length(prec.SOC_Windows)
-        window = prec.SOC_Windows(k);
-        if ~isempty(window.rowInfo) && ~window.skip
-            total_points = total_points + length(window.rowInfo);
-        end
+    t = data.TestTime;    % 时间序列
+    I = data.Amps;        % 电流
+    V_actual = data.Volts; % 实际电压
+    S = prec.SOC_Status;   % SOC
+
+    if length(S) ~= length(t)
+        error('SOC_Status长度 (%d) 与数据行数 (%d) 不匹配', length(S), length(t));
     end
-    
-    V_actual = zeros(total_points, 1);
-    V_predicted = zeros(total_points, 1);
-    ptr = 1; % 当前写入位置指针
-    
-    % ===== 2. 遍历所有窗口填充数据 =====
-    for k = 1:length(prec.SOC_Windows)
-        window = prec.SOC_Windows(k);
-        if isempty(window.rowInfo) || window.skip
-            continue;
+
+    V_predicted = zeros(size(V_actual));
+    V_RC = 0; 
+    for k = 1:length(t)
+        soc = S(k);
+        window_idx = find([prec.SOC_Windows.range_lower] <= soc & ...
+                          [prec.SOC_Windows.range_upper] >= soc, 1);
+        if isempty(window_idx)
+            error('SOC %.2f%% 超出窗口范围', soc);
         end
-        
-        t = [window.rowInfo.TestTime]';
-        I = [window.rowInfo.Amps]';
-        S = window.SOC';
-        V_meas = [window.rowInfo.Volts]';
-        
-        try
-            V_model = window.predict(window.oth, t, I, S);
-            
-            % 严格校验数据长度
-            if length(V_model) ~= length(V_meas)
-                warning('窗口 %d 预测数据长度不匹配（实际=%d，预测=%d），已跳过', ...
-                    k, length(V_meas), length(V_model));
+        window = prec.SOC_Windows(window_idx);
+
+        if isempty(window.oth)
+            error('SOC %.2f%% 没有对应的参数', soc);
+        end
+        OCV1 = window.oth(1);
+        OCV2 = window.oth(2);
+        R0 = window.oth(3);
+        R1 = window.oth(4);
+        tau1 = window.oth(5);
+
+        OCV = OCV1 * soc + OCV2;
+
+        if k > 1
+            dt = t(k) - t(k-1);
+            if dt <= 0
+                warning('时间步长非正: dt = %.2f s at k = %d', dt, k);
+                V_predicted(k) = V_predicted(k-1); 
                 continue;
             end
-        catch ME
-            fprintf('窗口 %d 预测失败: %s\n', k, ME.message);
-            continue;
+            dV_RC = (I(k-1) * R1 - V_RC) / tau1;
+            V_RC = V_RC + dt * dV_RC;
         end
-        
-        % 填充到预分配数组
-        n = length(V_meas);
-        V_actual(ptr:ptr+n-1) = V_meas;
-        V_predicted(ptr:ptr+n-1) = V_model;
-        ptr = ptr + n;
+
+        V_predicted(k) = OCV - I(k) * R0 - V_RC;
     end
-    
-    % ===== 3. 裁剪未使用的空间 =====
-    V_actual = V_actual(1:ptr-1);
-    V_predicted = V_predicted(1:ptr-1);
-    
-    % ===== 4. 计算RMSE =====
-    if isempty(V_actual)
-        error('无有效数据可用于验证');
-    end
-    fprintf('实际电压范围: [%.2f V, %.2f V]\n', min(V_actual), max(V_actual));
-    fprintf('预测电压范围: [%.2f V, %.2f V]\n', min(V_predicted), max(V_predicted));
+
     rmse = sqrt(mean((V_actual - V_predicted).^2));
     fprintf('全局电压预测 RMSE: %.4f V\n', rmse);
-    
-    % ... (绘图部分保持不变)
-    figure;
-    plot(V_actual, 'b', 'DisplayName', '实际电压');
+
+figure;
+    plot(t, V_actual, 'b', 'DisplayName', '实际电压');
     hold on;
-    plot(V_predicted, 'r--', 'DisplayName', '预测电压');
-    xlabel('数据点序号');
+    plot(t, V_predicted, 'r--', 'DisplayName', '预测电压');
+    xlabel('时间 (s)');
     ylabel('电压 (V)');
     legend;
-    title('实际电压 vs 模型预测电压');
+    title('实际电压 vs 预测电压');
 end
 
 %预处理实验数据，获取必要的数据
@@ -196,12 +241,52 @@ classdef preconditioningData
 properties
     SOC_Status
     SOC_Windows
+
+    MovingWindowSOC % 新增：存储滑动窗口中心SOC
+    MovingWindowR0  % 新增：存储滑动窗口计算的R0
+    RawData         % 新增：存储原始数据引用，方便访问
+    R0Lookup
 end
 methods
 
-    function obj= init(obj,data)
-        obj=obj.calculateSoc(data);
-        obj=obj.getSOCWindows(data);
+    function obj = init(obj, data)
+        obj.RawData = data; % 存储原始数据引用
+        obj = obj.calculateSoc(data);
+
+       
+        obj = obj.getSOCWindows(data); % 保留用于其他参数识别
+
+        window_width = config.getInstance().Moving_SOC_Window_Width;
+        step_size = config.getInstance().Moving_SOC_Window_Step;   
+        r0_threshold = config.getInstance().R0_Threshold; % 获取R0计算参数
+        r0_avg_points = config.getInstance().R0_AvgPoints; % 获取R0计算参数
+
+        obj = obj.calculateMovingWindowR0(window_width, step_size, r0_threshold, r0_avg_points);
+
+        valid_indices = ~isnan(obj.MovingWindowR0) & ~isnan(obj.MovingWindowSOC);
+        soc_pts = obj.MovingWindowSOC(valid_indices);
+        r0_pts = obj.MovingWindowR0(valid_indices);
+
+        [unique_soc_pts, ia, ic] = unique(soc_pts);
+        unique_r0_pts = accumarray(ic, r0_pts, [], @mean); % Average R0 for duplicate SOCs
+
+        if length(unique_soc_pts) < 2
+            error('Need at least two valid, unique R0 points to create an interpolator.');
+        end
+
+        R0_lookup_function = @(soc_query) interp1(unique_soc_pts, unique_r0_pts, ...
+            max(min(soc_query, max(unique_soc_pts)), min(unique_soc_pts)), 'linear', 'extrap');
+            
+
+        % --- You now have 'R0_lookup_function' ready to be used ---
+        % You might store it in the preconditioningData object:
+         obj.R0Lookup = R0_lookup_function;
+         for i = 1:length(obj.SOC_Windows)
+            block = obj.SOC_Windows(i);
+            center_soc = (block.range_lower + block.range_upper) / 2; 
+            block.R0 = obj.R0Lookup(center_soc); 
+            obj.SOC_Windows(i) = block; 
+        end
     end
     function obj = calculateSoc(obj,data) 
         SOC0 = config.getInstance().SOC0; 
@@ -217,7 +302,8 @@ methods
     
         for k = 2:length(time)
             delta_Q = current(k-1) * dt(k-1); 
-            SOC = SOC + (delta_Q / capacity) * 100; 
+            
+            SOC = SOC - (delta_Q / capacity) * 100; 
             %SOC = max(0, min(SOC, 100));
             SOC_List(k) = SOC;
         end
@@ -225,9 +311,9 @@ methods
         max_value=max(SOC_List);
         temp_value=max_value-100;
         for k = 1:length(SOC_List)
-            SOC_List(k)=SOC_List(k)-temp_value;
+            SOC_List(k)=max(0,SOC_List(k)-temp_value);
         end
-        obj.SOC_Status = SOC_List(:);
+        obj.SOC_Status = SOC_List();
     end
 
 
@@ -254,38 +340,200 @@ methods
         end
     end
 
-    function verifyModel(prec, data)
-        V_actual = [];
-        V_predicted = [];
-        
-        for k = 1:length(prec.SOC_Windows)
-            window = prec.SOC_Windows(k);
-            if isempty(window.rowInfo)
-                continue;
-            end
-            t = [window.rowInfo.TestTime]';
-            I = [window.rowInfo.Amps]';
-            S = window.SOC';
-            V_meas = [window.rowInfo.Volts]';
-            params = window.oth;
-            
-            V_model = window.predict(params, t, I, S);
-            
-            V_actual = [V_actual; V_meas];
-            V_predicted = [V_predicted; V_model];
+    function obj = calculateMovingWindowR0(obj, window_width, step_size, threshold, avg_points)
+        if isempty(obj.SOC_Status) || isempty(obj.RawData)
+            error('SOC_Status or RawData is empty. Run calculateSoc first and ensure RawData is stored.');
         end
-        
-        rmse = sqrt(mean((V_actual - V_predicted).^2));
-        fprintf('RMSE: %.4f V\n', rmse);
-        
+        if window_width <= 0 || step_size <= 0
+            error('Window width and step size must be positive.');
+        end
+
+        soc_centers = [];
+        r0_values = [];
+
+        min_soc = window_width / 2;
+        max_soc = 100 - window_width / 2;
+
+        if min_soc > max_soc % 处理窗口过大的情况
+           warning('Window width is too large for the SOC range.');
+           obj.MovingWindowSOC = [];
+           obj.MovingWindowR0 = [];
+           return;
+        end
+
+        current_center_soc = min_soc;
+
+        all_currents = obj.RawData.Amps; 
+        all_voltages = obj.RawData.Volts; 
+
+        while current_center_soc <= max_soc
+            lower_soc = max(0, current_center_soc - window_width / 2);
+            upper_soc = min(100, current_center_soc + window_width / 2);
+
+            % 找到当前窗口内的索引
+            mask = (obj.SOC_Status >= lower_soc) & (obj.SOC_Status < upper_soc);
+            % 对最后一个可能的中心点，包含上限
+            if abs(current_center_soc - max_soc) < step_size / 2
+                mask = (obj.SOC_Status >= lower_soc) & (obj.SOC_Status <= upper_soc);
+            end
+            indices = find(mask);
+
+            if length(indices) >= 2 * avg_points + 1 % 确保有足够数据点计算R0
+                % 提取当前窗口的电压和电流
+                window_currents = all_currents(indices);
+                window_voltages = all_voltages(indices);
+
+                % 调用静态R0计算函数
+                current_r0 = preconditioningData.staticCalculateR0(window_currents, window_voltages, threshold, avg_points);
+
+                if ~isnan(current_r0)
+                    soc_centers = [soc_centers; current_center_soc];
+                    r0_values = [r0_values; current_r0];
+                else
+                     fprintf('Warning: R0 calculation failed for SOC center %.2f%% (Window [%.2f%%, %.2f%%])\n', ...
+                             current_center_soc, lower_soc, upper_soc);
+                end
+            else
+                fprintf('Warning: Not enough data points (%d) for SOC center %.2f%% (Window [%.2f%%, %.2f%%])\n', ...
+                        length(indices), current_center_soc, lower_soc, upper_soc);
+            end
+
+            % 移动到下一个窗口中心
+            current_center_soc = current_center_soc + step_size;
+
+            % 确保最后一个点被计算（如果步长不能整除）
+             if current_center_soc > max_soc && abs(current_center_soc - step_size - max_soc) > 1e-6 % 检查是否刚超过但之前没算到max_soc
+                current_center_soc = max_soc; % 强制计算最后一个中心点
+                 % 重复上面的查找和计算逻辑... (可以封装成一个内部函数避免重复)
+                 lower_soc = max(0, current_center_soc - window_width / 2);
+                 upper_soc = min(100, current_center_soc + window_width / 2);
+                 mask = (obj.SOC_Status >= lower_soc) & (obj.SOC_Status <= upper_soc); % 包含上限
+                 indices = find(mask);
+                 if length(indices) >= 2 * avg_points + 1
+                     window_currents = all_currents(indices);
+                     window_voltages = all_voltages(indices);
+                     current_r0 = preconditioningData.staticCalculateR0(window_currents, window_voltages, threshold, avg_points);
+                     if ~isnan(current_r0)
+                         % 检查是否已经添加过这个中心点 (避免因浮点数误差重复添加)
+                         if isempty(soc_centers) || abs(soc_centers(end) - current_center_soc) > 1e-6
+                             soc_centers = [soc_centers; current_center_soc];
+                             r0_values = [r0_values; current_r0];
+                         end
+                     else
+                          fprintf('Warning: R0 calculation failed for SOC center %.2f%% (Window [%.2f%%, %.2f%%])\n', ...
+                                  current_center_soc, lower_soc, upper_soc);
+                     end
+                 else
+                      fprintf('Warning: Not enough data points (%d) for SOC center %.2f%% (Window [%.2f%%, %.2f%%])\n', ...
+                              length(indices), current_center_soc, lower_soc, upper_soc);
+                 end
+                 break; % 计算完最后一个点后退出循环
+             end
+        end
+
+        obj.MovingWindowSOC = soc_centers;
+        obj.MovingWindowR0 = r0_values;
+        fprintf('Calculated R0 for %d moving windows.\n', length(soc_centers));
+    end
+
+    function plotSmoothedR0(obj, method)
+        if nargin < 2
+            method = 'spline'; % 默认使用样条插值
+        end
+    
+        if isempty(obj.MovingWindowSOC) || isempty(obj.MovingWindowR0)
+            disp('No moving window R0 data to plot.');
+            return;
+        end
+    
+        valid_indices = ~isnan(obj.MovingWindowR0);
+        soc_points = obj.MovingWindowSOC(valid_indices);
+        r0_points = obj.MovingWindowR0(valid_indices);
+    
+        if length(soc_points) < 2 
+            disp('Not enough valid R0 points for interpolation.');
+            figure;
+            scatter(soc_points, r0_points, 'filled');
+            xlabel('SOC (%)');
+            ylabel('R0 (Ohm)');
+            title('Calculated R0 Points (Moving Window)');
+            grid on;
+            return;
+        end
+    
+       
+        soc_fine = linspace(min(soc_points), max(soc_points), 200);
+    
+ 
+        r0_smooth = interp1(soc_points, r0_points, soc_fine, method);
+    
+        % 绘图
         figure;
-        plot(V_actual, 'b', 'DisplayName', '实际电压');
+        scatter(soc_points, r0_points, 'b', 'filled', 'DisplayName', 'Calculated R0 Points');
         hold on;
-        plot(V_predicted, 'r', 'DisplayName', '预测电压');
-        xlabel('数据点');
-        ylabel('电压 (V)');
-        legend;
-        title('电压比较');
+        plot(soc_fine, r0_smooth, 'r-', 'LineWidth', 1.5, 'DisplayName', ['Smoothed R0 (', method, ')']);
+        hold off;
+        xlabel('SOC (%)');
+        ylabel('R0 (Ohm)');
+        title('R0 vs SOC ');
+        legend show;
+        grid on;
+    end
+end
+
+methods (Static)
+    function R0 = staticCalculateR0(currents, voltages, threshold, avg_points)
+        if nargin < 3 || isempty(threshold)
+            threshold = 0.5;
+        end
+        if nargin < 4 || isempty(avg_points)
+            avg_points = 3;
+        end
+
+        currents = currents(:)'; 
+        voltages = voltages(:)'; 
+        N = length(currents);
+
+        if N < 2 * avg_points + 1
+            R0 = NaN;
+             disp("错误：该窗口数据点不足，无法计算 R0"); 
+            return;
+        end
+
+        R0_values = [];
+        for i = avg_points + 1 : N - avg_points
+            delta_I_step = currents(i) - currents(i - 1); % 检测跳变点
+
+            if abs(delta_I_step) > threshold
+                % 取跳变前后 avg_points 个点的平均值
+                I_before = mean(currents(i - avg_points : i - 1));
+                V_before = mean(voltages(i - avg_points : i - 1));
+                I_after = mean(currents(i : i + avg_points - 1)); 
+                V_after = mean(voltages(i : i + avg_points - 1));
+
+                delta_I = I_after - I_before;
+                delta_V = V_after - V_before;
+
+                if delta_I ~= 0
+                    r_val = abs(delta_V / delta_I);
+                    if r_val > 0 && r_val < 1 
+                       R0_values = [R0_values; r_val];
+                    end
+                end
+            end
+        end
+
+        if ~isempty(R0_values)
+            %R0_values = rmoutliers(R0_values, 'percentiles', [10 90]); 
+            if ~isempty(R0_values)
+               R0 = mean(R0_values);
+            else
+               R0 = NaN; % 移除异常值后可能为空
+            end
+        else
+            R0 = NaN;
+            % disp("未检测到有效跳变点或计算出的R0值无效");
+        end
     end
 end
 end
@@ -314,65 +562,7 @@ classdef soc_block
             obj.indices = [];
             obj.R0 = NaN;
         end
-        function obj = calculateR0(obj, threshold, avg_points)
-            % 计算 SOC_block 对象在特定 SOC 区间内的 R0
-            % 输入：
-            %   obj：SOC_block 对象，包含 rowInfo 结构（已按 SOC 区间划分）
-            %   threshold：电流跳变阈值（默认 0.5A）
-            %   avg_points：跳变前后取平均的点数（默认 3）
-            % 输出：
-            %   obj：更新后的对象，包含该 SOC 区间的 R0
         
-            if nargin < 2 || isempty(threshold)
-                threshold = 0.5;
-            end
-            if nargin < 3 || isempty(avg_points)
-                avg_points = 3;
-            end
-        
-            currents = [obj.rowInfo.Amps];    
-            voltages = [obj.rowInfo.Volts];  
-            N = length(currents);           
-        
-            if N < 2 * avg_points + 1
-                obj.R0 = NaN;
-                disp("错误：该 SOC 区间数据点不足，无法计算 R0");
-                return;
-            end
-        
-            R0_values = [];
-        
-            for i = avg_points + 1 : N - avg_points
-                % 计算相邻点的电流差
-                delta_I = currents(i) - currents(i - 1);
-                
-                % 检查是否超过跳变阈值
-                if abs(delta_I) > threshold
-                    % 取跳变前后 avg_points 个点的平均值
-                    I_before = mean(currents(i - avg_points : i - 1));
-                    V_before = mean(voltages(i - avg_points : i - 1));
-                    I_after = mean(currents(i : i + avg_points - 1));
-                    V_after = mean(voltages(i : i + avg_points - 1));
-                    
-                    % 计算变化量
-                    delta_I = I_after - I_before;
-                    delta_V = V_after - V_before;
-                    
-                    % 避免除以零并计算 R0
-                    if delta_I ~= 0
-                        R0 = delta_V / delta_I;
-                        R0_values = [R0_values; R0];
-                    end
-                end
-            end
-        
-            if ~isempty(R0_values)
-                obj.R0 = mean(R0_values);
-            else
-                obj.R0 = NaN; 
-                disp("未检测到有效跳变点，统一用数值方法计算参数");
-            end
-        end
       
         function obj = getAllRow(obj, data)
             totalRows = numel(obj.indices);
@@ -389,7 +579,7 @@ classdef soc_block
 
         end
 
-        function obj = fminconTest(obj, prev_R0)
+        function obj = fminconTest(obj, prev_Vmean)
             data = obj.rowInfo;
             t = [data.TestTime]';
             I = [data.Amps]';
@@ -400,25 +590,23 @@ classdef soc_block
             I = I(:);
             V_meas = V_meas(:);
             S = obj.SOC(:);   
+           
             if ~isequal(length(t), length(I), length(V_meas), length(S))
-                error('输入数据长度不一致');
-            endif ~isequal(length(t), length(I), length(V_meas), length(S))
                 error('输入数据长度不一致: t=%d, I=%d, V_meas=%d, S=%d',...
                     length(t), length(I), length(V_meas), length(S));
             end
             
             % 初始化参数和约束
             if isnan(obj.R0)
-                param0 = [0.001, 3.5, 0.01, 0.01, 10, 0]; % 更合理的初始猜测
-                lb = [0,    3.0, 0.001, 0.001, 1,   -4.2]; 
-                ub = [0.1,  4.2, Inf,   0.1,   100, 4.2]; 
+                param0 = [0.001, 3.5, 0.01, 1, 10, 0]; 
+                lb = [0,0, 0, 0.01, 0,   -4.2]; 
+                ub = [Inf,Inf,1,1,   100, 4.2]; 
             else
                 param0 = [0.001, mean(V_meas), obj.R0, 0.01, 10, 0];
-                lb = [0,    3.0, max(0.001, obj.R0*0.95), 0,     1,   -4.2]; 
-                ub = [0.1,  4.2, min(prev_R0, obj.R0*1.05), 0.1, 100, 4.2]; 
+                lb = [0, 0, obj.R0, 0.01,     0,   -4.2]; 
+                ub = [Inf,  Inf, obj.R0, 1, 100, 4.2]; 
             end
             
-            % 强制确保 lb ≤ ub（关键修复）
             for i = 1:length(lb)
                 if lb(i) > ub(i)
                     ub(i) = lb(i) + 1e-6; % 微小偏移避免数值问题
@@ -426,17 +614,22 @@ classdef soc_block
                         obj.range_lower, obj.range_upper, i, lb(i), ub(i));
                 end
             end
-            
-            % 线性约束：OCV(SOC=0) >=3.0 且 OCV(SOC=100) <=4.2
-            A = [0, 1, 0, 0, 0, 0;       % OCV2 >=3.0
-                 100, 1, 0, 0, 0, 0];    % 100*OCV1 + OCV2 <=4.2
-            b = [3.0; 4.2];
-            
+            if(obj.range_upper<100)
+            % 线性约束：OCV(SOC=0) >=2.7 且 OCV(SOC=100) <=4.2
+                A = [-(obj.range_lower+obj.range_upper)/2, -1, 0, 0, 0, 0;       % OCV2 >=2.7
+                (obj.range_lower+obj.range_upper)/2, 1, 0, 0, 0, 0;  % 100*OCV1 + OCV2 <=4.2
+                (obj.range_lower+obj.range_upper)/2, 1, 0, 0, 0, 0];   % -OCV1*S_j - OCV2 <= - max V(S_j(ii-1))     OCV(i)>OCV(ii-1)>V(ii-1) . (保证单调性)
+                b = [-2.7; 4.2;prev_Vmean];
+            else
+                A = [-(obj.range_lower+obj.range_upper)/2, -1, 0, 0, 0, 0;       % OCV2 >=2.7
+                (obj.range_lower+obj.range_upper)/2, 1, 0, 0, 0, 0];  % 100*OCV1 + OCV2 <=4.2
+                b = [-2.7; 4.2];
+            end
             % 初始条件约束
             Aeq = [S(1), 1, -I(1), 0, 0, -1];
             beq = V_meas(1);
             
-            options = optimoptions('fmincon', 'Display', 'iter', 'MaxIterations', 500);
+            options = optimoptions('fmincon', 'display', 'iter', 'MaxIterations', 500);
             try
                 [param_opt, ~, exitflag] = fmincon(@(x) obj.compute_RMSE(x, t, I, V_meas, S), ...
                     param0, A, b, Aeq, beq, lb, ub, [], options);

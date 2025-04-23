@@ -1,4 +1,6 @@
 function guiRun(app)
+cfg = config.getInstance();
+cfg.openLog=true;
 data=LoadData;
 prec = preconditioningData;
 prec = prec.init(data);
@@ -22,7 +24,8 @@ function rmse = verifyModel(app,prec,data)
 
     % 检查数据长度一致性
     if length(S) ~= length(t)
-        error('SOC_Status长度 (%d) 与数据行数 (%d) 不匹配', length(S), length(t));
+        app.log('error:SOC_Status长度 (%d) 与数据行数 (%d) 不匹配', length(S), length(t));
+        error();
     end
 
     % 初始化预测电压数组
@@ -36,13 +39,15 @@ function rmse = verifyModel(app,prec,data)
         window_idx = find([prec.SOC_Windows.range_lower] <= soc & ...
                           [prec.SOC_Windows.range_upper] >= soc, 1);
         if isempty(window_idx)
-            error('SOC %.2f%% 超出窗口范围', soc);
+            app.log('error:SOC %.2f%% 超出窗口范围', soc);
+            error();
         end
         window = prec.SOC_Windows(window_idx);
 
         % 获取参数
         if isempty(window.oth)
-            error('SOC %.2f%% 没有对应的参数', soc);
+            app.log('SOC %.2f%% 没有对应的参数', soc);
+            error();
         end
         OCV1 = window.oth(1);
         OCV2 = window.oth(2);
@@ -65,17 +70,15 @@ function rmse = verifyModel(app,prec,data)
             V_RC = V_RC + dt * dV_RC;
         end
 
-        % 计算预测电压
         V_predicted(k) = OCV - I(k) * R0 - V_RC;
     end
 
-    % 计算 RMSE
     rmse = sqrt(mean((V_actual - V_predicted).^2));
-    fprintf('全局电压预测 RMSE: %.4f V\n', rmse);
+    text="全局电压预测 RMSE:"+rmse;
+    app.showResult(text);
 
     cla(app.UIAxes_2);
-    
-    % 绘制新图表
+
     plot(app.UIAxes_2, t, V_actual, 'b', 'DisplayName', '实际电压');
     hold(app.UIAxes_2, 'on');
     plot(app.UIAxes_2, t, V_predicted, 'r--', 'DisplayName', '预测电压');
