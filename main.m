@@ -17,7 +17,8 @@ end
 
 function rmse = verifyModel(prec, data)
     t = data.TestTime;    % 时间序列
-    I = data.Amps;        % 电流
+    I_raw = [data.Amps]';
+    I = abs(I_raw);
     V_actual = data.Volts; % 实际电压
     S = prec.SOC_Status;   % SOC
 
@@ -47,18 +48,12 @@ function rmse = verifyModel(prec, data)
 
         OCV = OCV1 * soc + OCV2;
 
-        if k > 1
-            dt = t(k) - t(k-1);
-            if dt <= 0
-                warning('时间步长非正: dt = %.2f s at k = %d', dt, k);
-                V_predicted(k) = V_predicted(k-1); 
-                continue;
-            end
-            dV_RC = (I(k-1) * R1 - V_RC) / tau1;
+        if k>1
+            dt = t(k)-t(k-1);   
+            dV_RC = (I(k-1)*R1 - V_RC) / tau1;
             V_RC = V_RC + dt * dV_RC;
         end
-
-        V_predicted(k) = OCV - I(k) * R0 - V_RC;
+        V_predicted(k) = OCV - sign(data.Amps(k))*(I(k)*R0) - V_RC;
     end
 
     rmse = sqrt(mean((V_actual - V_predicted).^2));
