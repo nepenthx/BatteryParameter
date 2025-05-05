@@ -64,12 +64,12 @@ classdef soc_block
         
             if isnan(obj.R0)
                 param0 = [0.001, 3.5,    0.01, 1, 10, 0];
-                lb     = [0,     0,      0,    0.01, 0,  -4.2];
-                ub     = [Inf,   Inf,    1,    1,    50, 4.2];
+                lb     = [0,     0,      0,   0.001, 0,  -4.2];
+                ub     = [Inf,   Inf,    1,    1,    100, 4.2];
             else
                 param0 = [0.001, mean(V_meas), obj.R0, 0.01, 10, 0];
-                lb     = [0.002, 2.7, obj.R0, 0.01,    0,   -4.2];
-                ub     = [0.015, 4.2, obj.R0, 1,       50,  4.2];
+                lb     = [0.002, 2.7, obj.R0, 0.001,    0,   -4.2];
+                ub     = [0.015, 4.2, obj.R0, 1,       100,  4.2];
             end
         
             for i = 1:numel(lb)
@@ -80,12 +80,12 @@ classdef soc_block
                 end
             end
         
-            if obj.range_upper < 100
+            if obj.range_lower > 0
                 A = [-(obj.range_lower+obj.range_upper)/2, -1, 0,0,0,0;
                       (obj.range_lower+obj.range_upper)/2,  1, 0,0,0,0];
-                b = [-2.7; prev_Vmean];
+                b = [prev_Vmean;4.2];
             else
-                A = [-(obj.range_lower+obj.range_upper)/2, -1, 0,0,0,0;
+                A = [-(obj.range_lower+obj.range_upper)/2, -1, 0,0,0,0;   % -OCV1*S_j - OCV2 <= - max V(S_j(ii-1))           OCV(i)>OCV(ii-1)>V(ii-1)
                       (obj.range_lower+obj.range_upper)/2,  1, 0,0,0,0];
                 b = [-2.7; 4.2];
             end
@@ -142,7 +142,6 @@ classdef soc_block
             end
 
             OCV = OCV1 * S + OCV2;  
-            % —— 用 sign 恢复方向 —— 
             V_model = OCV - I_sign.*(I_mag*R0) - V_RC;
         end
         
@@ -163,7 +162,6 @@ classdef soc_block
             end
         
             OCV   = x(1)*S + x(2);
-            % —— 恢复方向 —— 
             V_model = OCV - I_sign.*(I_mag * x(3)) - V_RC;
             error   = sqrt(mean((V_meas - V_model).^2));
         end

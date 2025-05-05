@@ -1,53 +1,48 @@
-function guiRun(app)
-cfg = config.getInstance();
-cfg.openLog=true;
 data=LoadData;
 prec = preconditioningData;
 prec = prec.init(data);
-prev_R0 = Inf; 
+prev_Vmean = Inf; 
 for k = length(prec.SOC_Windows):-1:1
     prec.SOC_Windows(k) = prec.SOC_Windows(k).getAllRow(data);
-    prec.SOC_Windows(k) = prec.SOC_Windows(k).calculateR0();
-    prec.SOC_Windows(k) = prec.SOC_Windows(k).fminconTest(prev_R0);
-    prev_R0 = prec.SOC_Windows(k).R0; 
+    prec.SOC_Windows(k) = prec.SOC_Windows(k).fminconTest(prev_Vmean);
+    if(prec.SOC_Windows(k).skip == 1)
+        continue;
+    end
+    volt_temp=prec.SOC_Windows(k).rowInfo.Volts;
+    prev_Vmean = min(volt_temp);
 end
 
-verifyModel(app,prec, data);
+    verifyModel(prec, data);
 
-end
-function rmse = verifyModel(app,prec,data)
-    % 获取原始数据
+
+% 或者如果 R0_lookup_function 是一个独立变量:
+% verifyModel(prec, data, R0_lookup_function);
+
+function rmse = verifyModel(prec, data)
     t = data.TestTime;    % 时间序列
-    I = data.Amps;        % 电流
+    I_raw = [data.Amps]';
+    I = abs(I_raw);
     V_actual = data.Volts; % 实际电压
     S = prec.SOC_Status;   % SOC
 
-    % 检查数据长度一致性
     if length(S) ~= length(t)
-        app.log('error:SOC_Status长度 (%d) 与数据行数 (%d) 不匹配', length(S), length(t));
-        error();
+        error('SOC_Status长度 (%d) 与数据行数 (%d) 不匹配', length(S), length(t));
     end
 
-    % 初始化预测电压数组
     V_predicted = zeros(size(V_actual));
-    V_RC = 0; % 初始 V_RC，设为 0，可根据需要调整
-
-    % 按时间顺序遍历
+    V_RC = 0; 
     for k = 1:length(t)
         soc = S(k);
-        % 找到对应的 SOC 窗口
         window_idx = find([prec.SOC_Windows.range_lower] <= soc & ...
                           [prec.SOC_Windows.range_upper] >= soc, 1);
         if isempty(window_idx)
-            app.log('error:SOC %.2f%% 超出窗口范围', soc);
-            error();
+            error('SOC %.2f%% 超出窗口范围', soc);
         end
         window = prec.SOC_Windows(window_idx);
 
-        % 获取参数
         if isempty(window.oth)
-            app.log('SOC %.2f%% 没有对应的参数', soc);
-            error();
+            warning('SOC %.2f%% 没有对应的参数', soc);
+            continue
         end
         OCV1 = window.oth(1);
         OCV2 = window.oth(2);
@@ -55,27 +50,18 @@ function rmse = verifyModel(app,prec,data)
         R1 = window.oth(4);
         tau1 = window.oth(5);
 
-        % 计算 OCV
         OCV = OCV1 * soc + OCV2;
 
-        % 计算 V_RC（时间递推）
-        if k > 1
-            dt = t(k) - t(k-1);
-            if dt <= 0
-                warning('时间步长非正: dt = %.2f s at k = %d', dt, k);
-                V_predicted(k) = V_predicted(k-1); % 使用上一时刻值
-                continue;
-            end
-            dV_RC = (I(k-1) * R1 - V_RC) / tau1;
+        if k>1
+            dt = t(k)-t(k-1);   
+            dV_RC = (I(k-1)*R1 - V_RC) / tau1;
             V_RC = V_RC + dt * dV_RC;
         end
-
-        V_predicted(k) = OCV - I(k) * R0 - V_RC;
+        V_predicted(k) = OCV - sign(data.Amps(k))*(I(k)*R0) - V_RC;
     end
 
     rmse = sqrt(mean((V_actual - V_predicted).^2));
-    text="全局电压预测 RMSE:"+rmse;
-    app.showResult(text);
+    fprintf('全局电压预测 RMSE: %.4f V\n', rmse);
 
     cla(app.UIAxes_2);
 

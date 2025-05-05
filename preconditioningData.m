@@ -235,7 +235,7 @@ methods
         figure;
         scatter(soc_points, r0_points, 'b', 'filled', 'DisplayName', 'Calculated R0 Points');
         hold on;
-        plot(soc_fine, r0_smooth, 'r-', 'LineWidth', 1.5, 'DisplayName', ['Smoothed R0 (', method, ')']);
+        plot(soc_fine, r0_smooth, 'r-' );
         hold off;
         xlabel('SOC (%)');
         ylabel('R0 (Ohm)');
@@ -248,7 +248,7 @@ end
 methods (Static)
     function R0 = staticCalculateR0(currents, voltages, threshold, avg_points)
         if nargin < 3 || isempty(threshold)
-            threshold = 0.5;
+            threshold = 2;
         end
         if nargin < 4 || isempty(avg_points)
             avg_points = 3;
@@ -268,7 +268,7 @@ methods (Static)
         for i = avg_points + 1 : N - avg_points
             delta_I_step = currents(i) - currents(i - 1); % 检测跳变点
 
-            if abs(delta_I_step) > threshold
+            if delta_I_step < -threshold
                 % 取跳变前后 avg_points 个点的平均值
                 I_before = mean(currents(i - avg_points : i - 1));
                 V_before = mean(voltages(i - avg_points : i - 1));
