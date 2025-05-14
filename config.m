@@ -4,8 +4,8 @@ classdef config < handle
         C0 
         SOC_Window_Granularity
         openLog
-        Moving_SOC_Window_Width = 10; 
-        Moving_SOC_Window_Step = 5;   
+        Moving_SOC_Window_Width = 8; 
+        Moving_SOC_Window_Step = 4;   
         R0_Threshold = 0.5;        
         R0_AvgPoints = 3;       
     end
@@ -75,7 +75,7 @@ classdef config < handle
         function singleObj = getInstance()
             persistent localObj
             if isempty(localObj) || ~isvalid(localObj)
-                localObj = config(100,  4.3635, 5);
+                localObj = config(100,  4.3635, 4);
             end
             singleObj = localObj;
         end
