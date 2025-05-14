@@ -260,7 +260,7 @@ methods (Static)
 
         if N < 2 * avg_points + 1
             R0 = NaN;
-            % disp("错误：该窗口数据点不足，无法计算 R0"); % 在调用处处理或记录
+            % disp("错误：该窗口数据点不足，无法计算 R0"); 
             return;
         end
 
@@ -272,7 +272,7 @@ methods (Static)
                 % 取跳变前后 avg_points 个点的平均值
                 I_before = mean(currents(i - avg_points : i - 1));
                 V_before = mean(voltages(i - avg_points : i - 1));
-                I_after = mean(currents(i : i + avg_points - 1)); % 注意这里是 i 到 i+avg_points-1
+                I_after = mean(currents(i : i + avg_points - 1)); 
                 V_after = mean(voltages(i : i + avg_points - 1));
 
                 delta_I = I_after - I_before;
